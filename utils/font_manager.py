@@ -1,239 +1,306 @@
-import os
+"""
+Font Manager
+Downloads and manages handwriting fonts from Google Fonts GitHub mirror.
+"""
 import logging
-import requests
+import time
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional
+
+import requests
 
 logger = logging.getLogger(__name__)
 
-# Google Fonts - Handwriting fonts with direct download URLs
-HANDWRITING_FONTS = {
-    'HomemadeApple': {
-        'display_name': '✍️ Homemade Apple (Classic Cursive)',
-        'url': 'https://github.com/google/fonts/raw/main/apache/homemadeapple/HomemadeApple-Regular.ttf',
-        'filename': 'HomemadeApple-Regular.ttf',
-        'style': 'cursive',
-        'description': 'Natural flowing cursive handwriting'
+# ─── Font Registry ───────────────────────────────────────────────────────────
+# Each entry: key → {display_name, filename, urls (ordered by preference),
+#                    style, description}
+#
+# Primary URLs point to raw GitHub releases (pre-built TTF files).
+# Fallback URLs use jsDelivr CDN which mirrors Google Fonts.
+
+_GH = "https://github.com/google/fonts/raw/main"
+_CD = "https://cdn.jsdelivr.net/gh/google/fonts@main"
+
+FONT_REGISTRY: Dict[str, Dict] = {
+    "HomemadeApple": {
+        "display_name": "✍️ Homemade Apple",
+        "filename":     "HomemadeApple-Regular.ttf",
+        "style":        "cursive",
+        "description":  "Natural flowing cursive",
+        "urls": [
+            f"{_GH}/apache/homemadeapple/HomemadeApple-Regular.ttf",
+            f"{_CD}/apache/homemadeapple/HomemadeApple-Regular.ttf",
+        ],
     },
-    'Caveat': {
-        'display_name': '📝 Caveat (Casual Handwriting)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/caveat/Caveat%5Bwght%5D.ttf',
-        'filename': 'Caveat-Regular.ttf',
-        'fallback_url': 'https://fonts.gstatic.com/s/caveat/v17/WnznHAc5bAfYB2QRah7pcpNvOx-pjfJ9SIKjYBxPigs.woff2',
-        'style': 'casual',
-        'description': 'Relaxed everyday handwriting'
+    "Caveat": {
+        "display_name": "📝 Caveat",
+        "filename":     "Caveat-Regular.ttf",
+        "style":        "casual",
+        "description":  "Relaxed everyday handwriting",
+        "urls": [
+            f"{_GH}/ofl/caveat/static/Caveat-Regular.ttf",
+            f"{_CD}/ofl/caveat/static/Caveat-Regular.ttf",
+        ],
     },
-    'Kalam': {
-        'display_name': '🖊️ Kalam (Natural Pen)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/kalam/Kalam-Regular.ttf',
-        'filename': 'Kalam-Regular.ttf',
-        'style': 'natural',
-        'description': 'Natural pen writing style'
+    "Kalam": {
+        "display_name": "🖊️ Kalam",
+        "filename":     "Kalam-Regular.ttf",
+        "style":        "natural",
+        "description":  "Natural pen writing style",
+        "urls": [
+            f"{_GH}/ofl/kalam/Kalam-Regular.ttf",
+            f"{_CD}/ofl/kalam/Kalam-Regular.ttf",
+        ],
     },
-    'DancingScript': {
-        'display_name': '💫 Dancing Script (Elegant Cursive)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/dancingscript/DancingScript%5Bwght%5D.ttf',
-        'filename': 'DancingScript-Regular.ttf',
-        'style': 'elegant',
-        'description': 'Elegant flowing script'
+    "DancingScript": {
+        "display_name": "💫 Dancing Script",
+        "filename":     "DancingScript-Regular.ttf",
+        "style":        "elegant",
+        "description":  "Elegant flowing script",
+        "urls": [
+            f"{_GH}/ofl/dancingscript/static/DancingScript-Regular.ttf",
+            f"{_CD}/ofl/dancingscript/static/DancingScript-Regular.ttf",
+        ],
     },
-    'Pacifico': {
-        'display_name': '🌊 Pacifico (Bold Casual)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/pacifico/Pacifico-Regular.ttf',
-        'filename': 'Pacifico-Regular.ttf',
-        'style': 'bold',
-        'description': 'Bold casual handwriting'
+    "Pacifico": {
+        "display_name": "🌊 Pacifico",
+        "filename":     "Pacifico-Regular.ttf",
+        "style":        "bold",
+        "description":  "Bold casual handwriting",
+        "urls": [
+            f"{_GH}/ofl/pacifico/Pacifico-Regular.ttf",
+            f"{_CD}/ofl/pacifico/Pacifico-Regular.ttf",
+        ],
     },
-    'Sacramento': {
-        'display_name': '✒️ Sacramento (Fine Calligraphy)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/sacramento/Sacramento-Regular.ttf',
-        'filename': 'Sacramento-Regular.ttf',
-        'style': 'calligraphy',
-        'description': 'Fine calligraphic script'
+    "Sacramento": {
+        "display_name": "✒️ Sacramento",
+        "filename":     "Sacramento-Regular.ttf",
+        "style":        "calligraphy",
+        "description":  "Fine calligraphic script",
+        "urls": [
+            f"{_GH}/ofl/sacramento/Sacramento-Regular.ttf",
+            f"{_CD}/ofl/sacramento/Sacramento-Regular.ttf",
+        ],
     },
-    'Satisfy': {
-        'display_name': '🎨 Satisfy (Smooth Script)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/satisfy/Satisfy-Regular.ttf',
-        'filename': 'Satisfy-Regular.ttf',
-        'style': 'smooth',
-        'description': 'Smooth flowing script'
+    "Satisfy": {
+        "display_name": "🎨 Satisfy",
+        "filename":     "Satisfy-Regular.ttf",
+        "style":        "smooth",
+        "description":  "Smooth flowing script",
+        "urls": [
+            f"{_GH}/ofl/satisfy/Satisfy-Regular.ttf",
+            f"{_CD}/ofl/satisfy/Satisfy-Regular.ttf",
+        ],
     },
-    'GloriaHallelujah': {
-        'display_name': '✨ Gloria Hallelujah (Comic Style)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/gloriahallelujah/GloriaHallelujah.ttf',
-        'filename': 'GloriaHallelujah.ttf',
-        'style': 'comic',
-        'description': 'Comic book style handwriting'
+    "GloriaHallelujah": {
+        "display_name": "✨ Gloria Hallelujah",
+        "filename":     "GloriaHallelujah.ttf",
+        "style":        "comic",
+        "description":  "Comic book handwriting",
+        "urls": [
+            f"{_GH}/ofl/gloriahallelujah/GloriaHallelujah.ttf",
+            f"{_CD}/ofl/gloriahallelujah/GloriaHallelujah.ttf",
+        ],
     },
-    'Shadows_Into_Light': {
-        'display_name': '🌟 Shadows Into Light (Light Touch)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/shadowsintolight/ShadowsIntoLight.ttf',
-        'filename': 'ShadowsIntoLight.ttf',
-        'style': 'light',
-        'description': 'Light delicate handwriting'
+    "ShadowsIntoLight": {
+        "display_name": "🌟 Shadows Into Light",
+        "filename":     "ShadowsIntoLight.ttf",
+        "style":        "light",
+        "description":  "Light delicate handwriting",
+        "urls": [
+            f"{_GH}/ofl/shadowsintolight/ShadowsIntoLight.ttf",
+            f"{_CD}/ofl/shadowsintolight/ShadowsIntoLight.ttf",
+        ],
     },
-    'Indie_Flower': {
-        'display_name': '🌸 Indie Flower (Bubbly)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/indieflower/IndieFlower.ttf',
-        'filename': 'IndieFlower.ttf',
-        'style': 'bubbly',
-        'description': 'Cute bubbly handwriting'
+    "IndieFlower": {
+        "display_name": "🌸 Indie Flower",
+        "filename":     "IndieFlower.ttf",
+        "style":        "bubbly",
+        "description":  "Cute bubbly handwriting",
+        "urls": [
+            f"{_GH}/ofl/indieflower/IndieFlower.ttf",
+            f"{_CD}/ofl/indieflower/IndieFlower.ttf",
+        ],
     },
-    'Permanent_Marker': {
-        'display_name': '🖌️ Permanent Marker (Marker Style)',
-        'url': 'https://github.com/google/fonts/raw/main/apache/permanentmarker/PermanentMarker-Regular.ttf',
-        'filename': 'PermanentMarker-Regular.ttf',
-        'style': 'marker',
-        'description': 'Bold marker handwriting'
+    "PermanentMarker": {
+        "display_name": "🖌️ Permanent Marker",
+        "filename":     "PermanentMarker-Regular.ttf",
+        "style":        "marker",
+        "description":  "Bold marker handwriting",
+        "urls": [
+            f"{_GH}/apache/permanentmarker/PermanentMarker-Regular.ttf",
+            f"{_CD}/apache/permanentmarker/PermanentMarker-Regular.ttf",
+        ],
     },
-    'Patrick_Hand': {
-        'display_name': '📋 Patrick Hand (Neat Print)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/patrickhand/PatrickHand-Regular.ttf',
-        'filename': 'PatrickHand-Regular.ttf',
-        'style': 'print',
-        'description': 'Clean neat handprinting'
+    "PatrickHand": {
+        "display_name": "📋 Patrick Hand",
+        "filename":     "PatrickHand-Regular.ttf",
+        "style":        "print",
+        "description":  "Clean neat handprinting",
+        "urls": [
+            f"{_GH}/ofl/patrickhand/PatrickHand-Regular.ttf",
+            f"{_CD}/ofl/patrickhand/PatrickHand-Regular.ttf",
+        ],
     },
-    'Amatic_SC': {
-        'display_name': '📐 Amatic SC (Small Caps Print)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/amaticsc/AmaticSC-Regular.ttf',
-        'filename': 'AmaticSC-Regular.ttf',
-        'style': 'print',
-        'description': 'Condensed handprinted style'
+    "AmaticSC": {
+        "display_name": "📐 Amatic SC",
+        "filename":     "AmaticSC-Regular.ttf",
+        "style":        "print",
+        "description":  "Condensed handprinted style",
+        "urls": [
+            f"{_GH}/ofl/amaticsc/AmaticSC-Regular.ttf",
+            f"{_CD}/ofl/amaticsc/AmaticSC-Regular.ttf",
+        ],
     },
-    'Covered_By_Your_Grace': {
-        'display_name': '💌 Covered By Your Grace (Love Letter)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/coveredbyyourgrace/CoveredByYourGrace.ttf',
-        'filename': 'CoveredByYourGrace.ttf',
-        'style': 'romantic',
-        'description': 'Romantic letter writing style'
+    "CoveredByYourGrace": {
+        "display_name": "💌 Covered By Your Grace",
+        "filename":     "CoveredByYourGrace.ttf",
+        "style":        "romantic",
+        "description":  "Romantic letter writing",
+        "urls": [
+            f"{_GH}/ofl/coveredbyyourgrace/CoveredByYourGrace.ttf",
+            f"{_CD}/ofl/coveredbyyourgrace/CoveredByYourGrace.ttf",
+        ],
     },
-    'Rock_Salt': {
-        'display_name': '🧂 Rock Salt (Rough Writing)',
-        'url': 'https://github.com/google/fonts/raw/main/apache/rocksalt/RockSalt-Regular.ttf',
-        'filename': 'RockSalt-Regular.ttf',
-        'style': 'rough',
-        'description': 'Rough textured handwriting'
+    "RockSalt": {
+        "display_name": "🧂 Rock Salt",
+        "filename":     "RockSalt-Regular.ttf",
+        "style":        "rough",
+        "description":  "Rough textured handwriting",
+        "urls": [
+            f"{_GH}/apache/rocksalt/RockSalt-Regular.ttf",
+            f"{_CD}/apache/rocksalt/RockSalt-Regular.ttf",
+        ],
     },
-    'Yellowtail': {
-        'display_name': '🟡 Yellowtail (Retro Script)',
-        'url': 'https://github.com/google/fonts/raw/main/apache/yellowtail/Yellowtail-Regular.ttf',
-        'filename': 'Yellowtail-Regular.ttf',
-        'style': 'retro',
-        'description': 'Retro flowing script'
+    "Yellowtail": {
+        "display_name": "🟡 Yellowtail",
+        "filename":     "Yellowtail-Regular.ttf",
+        "style":        "retro",
+        "description":  "Retro flowing script",
+        "urls": [
+            f"{_GH}/apache/yellowtail/Yellowtail-Regular.ttf",
+            f"{_CD}/apache/yellowtail/Yellowtail-Regular.ttf",
+        ],
     },
-    'Architects_Daughter': {
-        'display_name': '🏗️ Architects Daughter (Technical)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/architectsdaughter/ArchitectsDaughter.ttf',
-        'filename': 'ArchitectsDaughter.ttf',
-        'style': 'technical',
-        'description': 'Technical drafting style'
+    "ArchitectsDaughter": {
+        "display_name": "🏗️ Architects Daughter",
+        "filename":     "ArchitectsDaughter.ttf",
+        "style":        "technical",
+        "description":  "Technical drafting style",
+        "urls": [
+            f"{_GH}/ofl/architectsdaughter/ArchitectsDaughter.ttf",
+            f"{_CD}/ofl/architectsdaughter/ArchitectsDaughter.ttf",
+        ],
     },
-    'Nothing_You_Could_Do': {
-        'display_name': '💭 Nothing You Could Do (Dreamy)',
-        'url': 'https://github.com/google/fonts/raw/main/ofl/nothingyoucoulddo/NothingYouCouldDo.ttf',
-        'filename': 'NothingYouCouldDo.ttf',
-        'style': 'dreamy',
-        'description': 'Dreamy flowing handwriting'
+    "NothingYouCouldDo": {
+        "display_name": "💭 Nothing You Could Do",
+        "filename":     "NothingYouCouldDo.ttf",
+        "style":        "dreamy",
+        "description":  "Dreamy flowing handwriting",
+        "urls": [
+            f"{_GH}/ofl/nothingyoucoulddo/NothingYouCouldDo.ttf",
+            f"{_CD}/ofl/nothingyoucoulddo/NothingYouCouldDo.ttf",
+        ],
     },
 }
 
-# Alternative CDN URLs for fallback
-FONT_CDN_BASE = "https://fonts.gstatic.com/s"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120 Safari/537.36"
+    )
+}
+
 
 class FontManager:
-    def __init__(self, fonts_folder: Path):
-        self.fonts_folder = Path(fonts_folder)
-        self.fonts_folder.mkdir(parents=True, exist_ok=True)
-    
+    def __init__(self, fonts_dir: Path):
+        self.dir = Path(fonts_dir)
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Public API ────────────────────────────────────────────────────────
+
     def get_available_fonts(self) -> List[Dict]:
-        """Return list of available fonts with their info"""
-        fonts = []
-        for key, info in HANDWRITING_FONTS.items():
-            font_path = self.fonts_folder / info['filename']
-            fonts.append({
-                'key': key,
-                'display_name': info['display_name'],
-                'style': info['style'],
-                'description': info['description'],
-                'available': font_path.exists(),
-                'filename': info['filename']
+        out = []
+        for key, info in FONT_REGISTRY.items():
+            out.append({
+                "key":          key,
+                "display_name": info["display_name"],
+                "style":        info["style"],
+                "description":  info["description"],
+                "filename":     info["filename"],
+                "available":    (self.dir / info["filename"]).exists(),
             })
-        return fonts
-    
-    def get_font_path(self, font_name: str) -> str:
-        """Get the file path for a font"""
-        if font_name not in HANDWRITING_FONTS:
-            font_name = 'Kalam'  # Default fallback
-        
-        font_info = HANDWRITING_FONTS[font_name]
-        font_path = self.fonts_folder / font_info['filename']
-        
-        if not font_path.exists():
-            logger.info(f"Font {font_name} not found, downloading...")
-            self.download_font(font_name)
-        
-        if font_path.exists():
-            return str(font_path)
-        
-        # Try system fonts as last resort
-        return self._get_system_font()
-    
-    def _get_system_font(self) -> str:
-        """Try to find a system font as fallback"""
-        system_font_paths = [
-            '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-            '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-            '/System/Library/Fonts/Helvetica.ttc',
-            'C:/Windows/Fonts/arial.ttf',
-        ]
-        for path in system_font_paths:
-            if os.path.exists(path):
-                return path
-        return None
-    
-    def download_font(self, font_name: str) -> bool:
-        """Download a specific font"""
-        if font_name not in HANDWRITING_FONTS:
-            return False
-        
-        font_info = HANDWRITING_FONTS[font_name]
-        font_path = self.fonts_folder / font_info['filename']
-        
-        if font_path.exists():
-            return True
-        
-        urls_to_try = [font_info['url']]
-        if 'fallback_url' in font_info:
-            urls_to_try.append(font_info['fallback_url'])
-        
-        for url in urls_to_try:
-            try:
-                logger.info(f"Downloading font {font_name} from {url}")
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                response = requests.get(url, timeout=30, headers=headers)
-                if response.status_code == 200 and len(response.content) > 1000:
-                    font_path.write_bytes(response.content)
-                    logger.info(f"✅ Downloaded font: {font_name}")
-                    return True
-            except Exception as e:
-                logger.warning(f"Failed to download {font_name} from {url}: {e}")
-        
-        logger.error(f"❌ Failed to download font: {font_name}")
-        return False
-    
-    def ensure_fonts_downloaded(self):
-        """Download all fonts that haven't been downloaded yet"""
-        success_count = 0
-        for font_name in HANDWRITING_FONTS:
-            font_info = HANDWRITING_FONTS[font_name]
-            font_path = self.fonts_folder / font_info['filename']
-            if not font_path.exists():
-                if self.download_font(font_name):
-                    success_count += 1
+        return out
+
+    def get_font_path(self, font_name: str) -> Optional[str]:
+        """Return local path, downloading first if needed."""
+        if font_name not in FONT_REGISTRY:
+            font_name = "Kalam"
+
+        info = FONT_REGISTRY[font_name]
+        path = self.dir / info["filename"]
+
+        if not path.exists():
+            self._download(font_name)
+
+        if path.exists():
+            return str(path)
+
+        # Last resort: another font that IS available
+        for key in FONT_REGISTRY:
+            p = self.dir / FONT_REGISTRY[key]["filename"]
+            if p.exists():
+                logger.warning(f"Using fallback font: {key}")
+                return str(p)
+
+        return self._system_font()
+
+    def ensure_fonts_downloaded(self) -> int:
+        """Download any missing fonts. Returns number available."""
+        ok = 0
+        for key in FONT_REGISTRY:
+            path = self.dir / FONT_REGISTRY[key]["filename"]
+            if path.exists():
+                ok += 1
             else:
-                success_count += 1
-        
-        logger.info(f"Font status: {success_count}/{len(HANDWRITING_FONTS)} fonts available")
-        return success_count
+                if self._download(key):
+                    ok += 1
+        logger.info(f"Fonts available: {ok}/{len(FONT_REGISTRY)}")
+        return ok
+
+    # ── Private ──────────────────────────────────────────────────────────
+
+    def _download(self, font_name: str) -> bool:
+        info = FONT_REGISTRY[font_name]
+        dest = self.dir / info["filename"]
+
+        for url in info["urls"]:
+            try:
+                logger.info(f"  Downloading {font_name} from {url}")
+                r = requests.get(url, headers=_HEADERS,
+                                 timeout=25, allow_redirects=True)
+                if r.status_code == 200 and len(r.content) > 4096:
+                    dest.write_bytes(r.content)
+                    logger.info(f"  ✅ {font_name} saved ({len(r.content)//1024} KB)")
+                    return True
+                else:
+                    logger.warning(f"  ⚠ {url}: HTTP {r.status_code}, "
+                                   f"size={len(r.content)}")
+            except Exception as exc:
+                logger.warning(f"  ⚠ {url}: {exc}")
+            time.sleep(0.3)
+
+        logger.error(f"  ❌ Could not download {font_name}")
+        return False
+
+    @staticmethod
+    def _system_font() -> Optional[str]:
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]
+        for p in candidates:
+            if Path(p).exists():
+                return p
+        return None
