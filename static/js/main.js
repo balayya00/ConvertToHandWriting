@@ -1,700 +1,564 @@
-/**
- * PDF to Handwriting Converter - Main JavaScript
- */
+/* ============================================================
+   PDF to Handwriting Converter  –  main.js  v3.0
+   ============================================================ */
+'use strict';
 
-// ===== STATE =====
-const state = {
-    currentTab: 'upload-tab',
-    selectedFile: null,
-    extractedPages: [],
-    layoutData: null,
-    isLayoutPreserved: false,
-    selectedFont: 'Kalam',
-    selectedPaper: 'ruled',
-    selectedColor: 'blue',
-    selectedFormat: 'pdf',
-    sessionId: null,
-    currentPage: 0,
-    totalPages: 0,
-    jpgUrls: [],
-    isConverting: false,
-    fontsLoaded: false
+/* ── State ─────────────────────────────────────────────────── */
+const S = {
+  file          : null,
+  pages         : [],
+  layoutData    : null,
+  font          : 'Kalam',
+  paper         : 'ruled',
+  color         : 'blue',
+  format        : 'pdf',
+  sessionId     : null,
+  jpgUrls       : [],
+  currentPage   : 0,
+  converting    : false,
 };
 
-// ===== INITIALIZATION =====
+/* ── Boot ───────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
-    loadFonts();
-    setupCharCounter();
-    setupFormatOptions();
-    
-    // Select default format
-    document.querySelector('.format-option[data-value="pdf"]').classList.add('selected');
+  loadFonts();
+  initCharCounter();
+  setFormat(document.querySelector('.format-option[data-value="pdf"]'));
+  setColor(document.querySelector('.color-option[data-value="blue"]'));
+  setPaper(document.querySelector('.paper-option[data-value="ruled"]'));
 });
 
-// ===== FONT LOADING =====
+/* ── Font loading ───────────────────────────────────────────── */
 async function loadFonts() {
-    try {
-        const response = await fetch('/api/fonts');
-        const data = await response.json();
-        
-        if (data.fonts) {
-            renderFontGrid(data.fonts);
-            state.fontsLoaded = true;
-        }
-    } catch (error) {
-        console.error('Failed to load fonts:', error);
-        renderFontGridFallback();
-    }
+  const grid = id('font-grid');
+  try {
+    const res  = await fetchJSON('/api/fonts');
+    const fonts = (res && res.fonts) ? res.fonts : [];
+    if (!fonts.length) throw new Error('empty');
+    renderFonts(fonts);
+  } catch (e) {
+    grid.innerHTML = fallbackFontHTML();
+    bindFontCards();
+  }
 }
 
-function renderFontGrid(fonts) {
-    const grid = document.getElementById('font-grid');
-    grid.innerHTML = '';
-    
-    // Font preview texts
-    const previews = {
-        'cursive': 'Hello World',
-        'casual': 'Quick notes',
-        'natural': 'My writing',
-        'elegant': 'Beautiful script',
-        'bold': 'Strong words',
-        'calligraphy': 'Fine writing',
-        'smooth': 'Smooth flow',
-        'comic': 'Fun style',
-        'light': 'Light touch',
-        'bubbly': 'So cute!',
-        'marker': 'Bold idea',
-        'print': 'Clean print',
-        'romantic': 'With love',
-        'rough': 'Rough draft',
-        'retro': 'Old style',
-        'technical': 'Technical',
-        'dreamy': 'Dreams...'
-    };
-    
-    fonts.forEach(font => {
-        const card = document.createElement('div');
-        card.className = `font-card ${font.key === state.selectedFont ? 'selected' : ''}`;
-        card.onclick = () => selectFont(card, font.key);
-        
-        const preview = previews[font.style] || 'Handwriting';
-        const name = font.display_name.split(' ').slice(1).join(' ').replace(/\(.*?\)/, '').trim();
-        
-        card.innerHTML = `
-            <div class="font-card-name">${font.display_name.split('(')[0].trim()}</div>
-            <div class="font-card-preview">${preview}</div>
-            <div class="font-card-style">${font.description}</div>
-            ${!font.available ? '<div class="font-downloading"><i class="fas fa-download"></i> Downloading...</div>' : ''}
-        `;
-        
-        grid.appendChild(card);
-    });
+function renderFonts(fonts) {
+  const grid = id('font-grid');
+  grid.innerHTML = fonts.map(f => `
+    <div class="font-card ${f.key === S.font ? 'selected' : ''}"
+         data-key="${esc(f.key)}"
+         onclick="pickFont(this)">
+      <div class="fc-name">${esc(f.display_name)}</div>
+      <div class="fc-desc">${esc(f.description)}</div>
+      ${!f.available ? '<div class="fc-dl"><i class="fas fa-download"></i> Queued</div>' : ''}
+    </div>`).join('');
 }
 
-function renderFontGridFallback() {
-    const grid = document.getElementById('font-grid');
-    const defaultFonts = [
-        { key: 'HomemadeApple', name: '✍️ Homemade Apple', preview: 'Classic cursive' },
-        { key: 'Kalam', name: '🖊️ Kalam', preview: 'Natural pen' },
-        { key: 'Caveat', name: '📝 Caveat', preview: 'Casual writing' },
-        { key: 'DancingScript', name: '💫 Dancing Script', preview: 'Elegant script' },
-        { key: 'Pacifico', name: '🌊 Pacifico', preview: 'Bold casual' },
-        { key: 'GloriaHallelujah', name: '✨ Gloria', preview: 'Comic style' },
-        { key: 'Patrick_Hand', name: '📋 Patrick Hand', preview: 'Neat print' },
-        { key: 'Indie_Flower', name: '🌸 Indie Flower', preview: 'Bubbly cute' },
-    ];
-    
-    grid.innerHTML = defaultFonts.map(f => `
-        <div class="font-card ${f.key === state.selectedFont ? 'selected' : ''}" 
-             onclick="selectFont(this, '${f.key}')">
-            <div class="font-card-name">${f.name}</div>
-            <div class="font-card-preview">${f.preview}</div>
-        </div>
-    `).join('');
+function fallbackFontHTML() {
+  const list = [
+    ['HomemadeApple','✍️ Homemade Apple','Classic cursive'],
+    ['Kalam',        '🖊️ Kalam',         'Natural pen'],
+    ['Caveat',       '📝 Caveat',         'Casual writing'],
+    ['DancingScript','💫 Dancing Script', 'Elegant script'],
+    ['Pacifico',     '🌊 Pacifico',       'Bold casual'],
+    ['IndieFlower',  '🌸 Indie Flower',   'Bubbly cute'],
+    ['PatrickHand',  '📋 Patrick Hand',   'Neat print'],
+    ['GloriaHallelujah','✨ Gloria',      'Comic style'],
+  ];
+  return list.map(([k,n,d]) => `
+    <div class="font-card ${k===S.font?'selected':''}"
+         data-key="${k}" onclick="pickFont(this)">
+      <div class="fc-name">${n}</div>
+      <div class="fc-desc">${d}</div>
+    </div>`).join('');
 }
 
-function selectFont(card, fontKey) {
-    document.querySelectorAll('.font-card').forEach(c => c.classList.remove('selected'));
-    card.classList.add('selected');
-    state.selectedFont = fontKey;
-    showToast(`Font selected: ${fontKey.replace(/_/g, ' ')}`, 'success');
+function bindFontCards() {
+  id('font-grid').querySelectorAll('.font-card')
+    .forEach(c => { c.onclick = () => pickFont(c); });
 }
 
-// ===== TAB SWITCHING =====
+function pickFont(card) {
+  document.querySelectorAll('.font-card').forEach(c => c.classList.remove('selected'));
+  card.classList.add('selected');
+  S.font = card.dataset.key;
+  toast(`Font: ${card.dataset.key.replace(/_/g,' ')}`, 'info');
+}
+
+/* ── Tabs ───────────────────────────────────────────────────── */
 function switchTab(tabId) {
-    state.currentTab = tabId;
-    
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.tab === tabId);
-    });
-    
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.toggle('active', content.id === tabId);
-    });
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tabId));
+  document.querySelectorAll('.tab-content').forEach(c =>
+    c.classList.toggle('active', c.id === tabId));
 }
 
-// ===== FILE HANDLING =====
-function handleDragOver(e) {
-    e.preventDefault();
-    document.getElementById('upload-zone').classList.add('drag-over');
-}
-
-function handleDragLeave(e) {
-    document.getElementById('upload-zone').classList.remove('drag-over');
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    document.getElementById('upload-zone').classList.remove('drag-over');
-    
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        processFile(files[0]);
-    }
-}
-
-function handleFileSelect(input) {
-    if (input.files && input.files[0]) {
-        processFile(input.files[0]);
-    }
-}
+/* ── Drag-and-drop / file select ────────────────────────────── */
+function onDragOver(e)  { e.preventDefault(); id('upload-zone').classList.add('drag-over'); }
+function onDragLeave()  { id('upload-zone').classList.remove('drag-over'); }
+function onDrop(e)      { e.preventDefault(); onDragLeave(); processFile(e.dataTransfer.files[0]); }
+function onFileChange(i){ if (i.files[0]) processFile(i.files[0]); }
 
 function processFile(file) {
-    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
-    const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png'];
-    const ext = '.' + file.name.split('.').pop().toLowerCase();
-    
-    if (!allowedExts.includes(ext)) {
-        showToast('Unsupported file type. Please upload PDF, JPG, or PNG', 'error');
-        return;
-    }
-    
-    if (file.size > 50 * 1024 * 1024) {
-        showToast('File too large. Maximum size is 50MB', 'error');
-        return;
-    }
-    
-    state.selectedFile = file;
-    
-    // Update UI
-    document.getElementById('file-preview').style.display = 'block';
-    document.getElementById('extract-btn').style.display = 'block';
-    document.getElementById('upload-zone').style.display = 'none';
-    
-    const icon = document.getElementById('file-type-icon');
-    icon.className = ext === '.pdf' ? 'fas fa-file-pdf' : 'fas fa-file-image';
-    icon.style.color = ext === '.pdf' ? '#ef4444' : '#3b82f6';
-    
-    document.getElementById('file-name').textContent = file.name;
-    document.getElementById('file-size').textContent = formatFileSize(file.size);
-    
-    // Show layout option for PDFs
-    if (ext === '.pdf') {
-        document.getElementById('layout-option').style.display = 'block';
-    }
-    
-    showToast(`File ready: ${file.name}`, 'success');
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['pdf','jpg','jpeg','png'].includes(ext)) {
+    return toast('Only PDF, JPG, PNG supported', 'error');
+  }
+  if (file.size > 50*1024*1024) {
+    return toast('Max file size is 50 MB', 'error');
+  }
+  S.file = file;
+
+  id('upload-zone').style.display = 'none';
+  id('file-preview').style.display = 'block';
+  id('extract-btn').style.display  = 'block';
+
+  const icon = id('file-type-icon');
+  icon.className = ext === 'pdf' ? 'fas fa-file-pdf' : 'fas fa-file-image';
+  icon.style.color = ext === 'pdf' ? '#ef4444' : '#3b82f6';
+  id('file-name').textContent = file.name;
+  id('file-size').textContent = fmtSize(file.size);
+
+  if (ext === 'pdf') id('layout-opt').style.display = 'block';
+  toast(`File ready: ${file.name}`, 'success');
 }
 
 function removeFile() {
-    state.selectedFile = null;
-    document.getElementById('file-preview').style.display = 'none';
-    document.getElementById('extract-btn').style.display = 'none';
-    document.getElementById('upload-zone').style.display = 'block';
-    document.getElementById('file-input').value = '';
-    document.getElementById('layout-option').style.display = 'none';
+  S.file = null;
+  id('upload-zone').style.display = 'block';
+  id('file-preview').style.display = 'none';
+  id('extract-btn').style.display  = 'none';
+  id('file-input').value = '';
+  id('layout-opt').style.display = 'none';
 }
 
-function formatFileSize(bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
-
-// ===== TEXT EXTRACTION =====
+/* ── Extract ────────────────────────────────────────────────── */
 async function extractText() {
-    if (!state.selectedFile) {
-        showToast('Please select a file first', 'warning');
-        return;
+  if (!S.file) return toast('Select a file first', 'warning');
+  showOverlay('Extracting text…');
+  try {
+    const fd = new FormData();
+    fd.append('file', S.file);
+    fd.append('input_type', 'file');
+
+    const res  = await fetch('/api/extract', { method:'POST', body:fd });
+    const text = await res.text();          // raw text first
+
+    let data;
+    try { data = JSON.parse(text); }
+    catch(e) {
+      console.error('Extract raw response:', text.slice(0,500));
+      throw new Error('Server returned invalid JSON during extraction');
     }
-    
-    showOverlay('Extracting text from file...');
-    
-    try {
-        const formData = new FormData();
-        formData.append('file', state.selectedFile);
-        formData.append('input_type', 'file');
-        
-        const response = await fetch('/api/extract', {
-            method: 'POST',
-            body: formData
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok || data.error) {
-            throw new Error(data.error || 'Extraction failed');
-        }
-        
-        // Store extracted data
-        state.extractedPages = data.pages || [data.text];
-        state.layoutData = data.layout_data || null;
-        
-        // Show extracted text
-        document.getElementById('extracted-text').value = data.text;
-        document.getElementById('extracted-card').style.display = 'block';
-        document.getElementById('step-2').style.display = 'block';
-        document.getElementById('page-count-badge').textContent = `${data.page_count} page${data.page_count > 1 ? 's' : ''}`;
-        
-        // Update step indicator
-        updateStepIndicator(2);
-        
-        // Scroll to settings
-        document.getElementById('step-2').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        
-        showToast(`Successfully extracted ${data.page_count} page(s)`, 'success');
-        
-    } catch (error) {
-        console.error('Extraction error:', error);
-        showToast(`Extraction failed: ${error.message}`, 'error');
-    } finally {
-        hideOverlay();
-    }
+
+    if (!res.ok || data.error) throw new Error(data.error || 'Extraction failed');
+
+    S.pages      = data.pages || [data.text || ''];
+    S.layoutData = data.layout_data || null;
+
+    id('extracted-text').value = data.text || '';
+    id('extracted-card').style.display = 'block';
+    id('step-2').style.display         = 'block';
+    id('page-count-badge').textContent =
+      `${data.page_count || 1} page${data.page_count !== 1 ? 's' : ''}`;
+
+    setStep(2);
+    id('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
+    toast(`Extracted ${data.page_count || 1} page(s)`, 'success');
+  } catch(e) {
+    console.error(e);
+    toast(`Extraction error: ${e.message}`, 'error');
+  } finally {
+    hideOverlay();
+  }
 }
 
 function useDirectText() {
-    const text = document.getElementById('direct-text').value.trim();
-    
-    if (!text) {
-        showToast('Please enter some text first', 'warning');
-        return;
-    }
-    
-    state.extractedPages = [text];
-    state.layoutData = null;
-    
-    document.getElementById('extracted-text').value = text;
-    document.getElementById('extracted-card').style.display = 'block';
-    document.getElementById('step-2').style.display = 'block';
-    document.getElementById('page-count-badge').textContent = '1 page';
-    
-    updateStepIndicator(2);
-    document.getElementById('step-2').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    
-    showToast('Text ready for conversion!', 'success');
+  const txt = id('direct-text').value.trim();
+  if (!txt) return toast('Enter some text first', 'warning');
+
+  S.pages      = [txt];
+  S.layoutData = null;
+
+  id('extracted-text').value         = txt;
+  id('extracted-card').style.display = 'block';
+  id('step-2').style.display         = 'block';
+  id('page-count-badge').textContent = '1 page';
+
+  setStep(2);
+  id('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  toast('Text ready!', 'success');
 }
 
-// ===== SETTINGS =====
-function selectPaper(el) {
-    document.querySelectorAll('.paper-option').forEach(opt => opt.classList.remove('active'));
-    el.classList.add('active');
-    state.selectedPaper = el.dataset.value;
+/* ── Settings helpers ───────────────────────────────────────── */
+function setPaper(el) {
+  document.querySelectorAll('.paper-option').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+  S.paper = el.dataset.value;
+}
+function setColor(el) {
+  document.querySelectorAll('.color-option').forEach(o => o.classList.remove('active'));
+  el.classList.add('active');
+  S.color = el.dataset.value;
+}
+function setFormat(el) {
+  document.querySelectorAll('.format-option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  S.format = el.dataset.value;
+  const r = el.querySelector('input[type=radio]');
+  if (r) r.checked = true;
 }
 
-function selectColor(el) {
-    document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('active'));
-    el.classList.add('active');
-    state.selectedColor = el.dataset.value;
+function updateSlider(sliderId, valId) {
+  const v = parseFloat(id(sliderId).value);
+  id(valId).textContent = Number.isInteger(v) ? v : v.toFixed(1);
 }
 
-function selectFormat(el) {
-    document.querySelectorAll('.format-option').forEach(opt => opt.classList.remove('selected'));
-    el.classList.add('selected');
-    state.selectedFormat = el.dataset.value;
-    const radio = el.querySelector('input[type="radio"]');
-    if (radio) radio.checked = true;
-}
-
-function setupFormatOptions() {
-    document.querySelectorAll('.format-option').forEach(option => {
-        option.addEventListener('click', function() {
-            selectFormat(this);
-        });
-    });
-}
-
-function updateSlider(sliderId, displayId, unit) {
-    const slider = document.getElementById(sliderId);
-    const display = document.getElementById(displayId);
-    display.textContent = parseFloat(slider.value).toFixed(slider.step.includes('.') ? 1 : 0);
-}
-
-// ===== CONVERSION =====
+/* ── Convert ────────────────────────────────────────────────── */
 async function convertToHandwriting() {
-    const extractedText = document.getElementById('extracted-text').value.trim();
-    
-    if (!extractedText) {
-        showToast('No text to convert. Please extract or enter text first.', 'warning');
-        return;
-    }
-    
-    if (state.isConverting) return;
-    state.isConverting = true;
-    
-    // Show loading in preview
-    document.getElementById('empty-preview').style.display = 'none';
-    document.getElementById('preview-container').style.display = 'none';
-    document.getElementById('preview-loading').style.display = 'flex';
-    document.getElementById('download-card').style.display = 'none';
-    
-    // Animate loading
-    animateLoading();
-    
-    try {
-        // Prepare pages
-        let pages = state.extractedPages.length > 0 ? [...state.extractedPages] : [extractedText];
-        
-        // Update with any edits made to extracted text
-        if (pages.length === 1 || state.extractedPages.length <= 1) {
-            pages = [extractedText];
-        }
-        
-        // Build settings
-        const settings = {
-            pages: pages,
-            text: extractedText,
-            font_name: state.selectedFont,
-            font_size: parseInt(document.getElementById('font-size').value),
-            line_spacing: parseFloat(document.getElementById('line-spacing').value),
-            ink_color: state.selectedColor,
-            margin: parseInt(document.getElementById('margin').value),
-            paper_style: state.selectedPaper,
-            output_format: state.selectedFormat,
-            page_width: 794,
-            page_height: 1123,
-        };
-        
-        // Add layout data if available and requested
-        const preserveLayout = document.getElementById('preserve-layout');
-        if (preserveLayout && preserveLayout.checked && state.layoutData) {
-            settings.layout_data = state.layoutData;
-            settings.preserve_layout = true;
-        }
-        
-        const response = await fetch('/api/convert', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(settings)
-        });
-        
-        const data = await response.json();
-        
-        if (!response.ok || data.error) {
-            throw new Error(data.error || 'Conversion failed');
-        }
-        
-        // Store session info
-        state.sessionId = data.session_id;
-        state.totalPages = data.page_count || 1;
-        state.currentPage = 0;
-        state.jpgUrls = data.jpg_urls || [];
-        
-        // Show preview
-        await showPreview(data);
-        
-        // Show download options
-        showDownloadOptions(data);
-        
-        // Update step indicator
-        updateStepIndicator(3);
-        
-        showToast('✅ Handwriting generated successfully!', 'success');
-        
-    } catch (error) {
-        console.error('Conversion error:', error);
-        showToast(`Conversion failed: ${error.message}`, 'error');
-        
-        // Reset preview
-        document.getElementById('preview-loading').style.display = 'none';
-        document.getElementById('empty-preview').style.display = 'block';
-    } finally {
-        state.isConverting = false;
-        stopLoadingAnimation();
-    }
-}
+  if (S.converting) return;
 
-let loadingInterval = null;
+  const txt = (id('extracted-text').value || '').trim();
+  if (!txt) return toast('No text to convert – extract or type some text first', 'warning');
 
-function animateLoading() {
-    const texts = [
-        'Loading handwriting fonts...',
-        'Drawing your text...',
-        'Adding paper texture...',
-        'Applying ink effects...',
-        'Generating PDF...',
-        'Almost done...'
-    ];
-    let i = 0;
-    document.getElementById('loading-text').textContent = texts[0];
-    document.getElementById('loading-detail').textContent = 'Please wait...';
-    
-    loadingInterval = setInterval(() => {
-        i = (i + 1) % texts.length;
-        document.getElementById('loading-text').textContent = texts[i];
-    }, 1500);
-}
+  S.converting = true;
+  id('convert-btn').disabled = true;
 
-function stopLoadingAnimation() {
-    if (loadingInterval) {
-        clearInterval(loadingInterval);
-        loadingInterval = null;
-    }
-    document.getElementById('preview-loading').style.display = 'none';
-}
+  showState('loading');
+  id('download-card').style.display = 'none';
 
-async function showPreview(data) {
-    const previewImg = document.getElementById('preview-image');
-    const previewContainer = document.getElementById('preview-container');
-    
-    let previewUrl = data.preview_url;
-    if (!previewUrl && data.pdf_url) {
-        previewUrl = `/api/preview/${data.session_id}`;
-    }
-    
-    if (previewUrl) {
-        return new Promise((resolve, reject) => {
-            previewImg.onload = () => {
-                previewContainer.style.display = 'block';
-                document.getElementById('preview-loading').style.display = 'none';
-                
-                // Setup pagination if multiple pages
-                if (state.jpgUrls.length > 1) {
-                    document.getElementById('preview-controls').style.display = 'flex';
-                    updatePageIndicator();
-                }
-                
-                resolve();
-            };
-            previewImg.onerror = () => {
-                previewContainer.style.display = 'none';
-                document.getElementById('preview-loading').style.display = 'none';
-                document.getElementById('empty-preview').style.display = 'block';
-                document.getElementById('empty-preview').innerHTML = `
-                    <div class="empty-icon"><i class="fas fa-check-circle" style="color: var(--success)"></i></div>
-                    <h3>Handwriting generated!</h3>
-                    <p>Preview not available, but your download is ready below.</p>
-                `;
-                resolve();
-            };
-            previewImg.src = previewUrl + '?t=' + Date.now();
-        });
-    } else {
-        document.getElementById('preview-loading').style.display = 'none';
-        previewContainer.style.display = 'none';
-    }
-}
+  startLoadingAnim();
 
-function showDownloadOptions(data) {
-    const downloadCard = document.getElementById('download-card');
-    const downloadButtons = document.getElementById('download-buttons');
-    
-    downloadCard.style.display = 'block';
-    downloadButtons.innerHTML = '';
-    
-    // Update stats
-    document.getElementById('dl-pages').textContent = state.totalPages;
-    document.getElementById('dl-format').textContent = data.output_format.toUpperCase();
-    
-    // PDF Download Button
-    if (data.pdf_url) {
-        const pdfBtn = document.createElement('a');
-        pdfBtn.href = data.pdf_url;
-        pdfBtn.download = 'handwritten_notes.pdf';
-        pdfBtn.className = 'btn btn-download-pdf btn-full';
-        pdfBtn.innerHTML = '<i class="fas fa-file-pdf"></i> Download PDF (All Pages)';
-        downloadButtons.appendChild(pdfBtn);
-    }
-    
-    // JPG Download Buttons
-    if (data.jpg_urls && data.jpg_urls.length > 0) {
-        if (data.jpg_urls.length === 1) {
-            const jpgBtn = document.createElement('a');
-            jpgBtn.href = data.jpg_urls[0];
-            jpgBtn.download = 'handwritten_page_1.jpg';
-            jpgBtn.className = 'btn btn-download-jpg btn-full';
-            jpgBtn.innerHTML = '<i class="fas fa-file-image"></i> Download JPG Image';
-            downloadButtons.appendChild(jpgBtn);
-        } else {
-            // Individual page downloads + ZIP
-            data.jpg_urls.forEach((url, i) => {
-                const btn = document.createElement('a');
-                btn.href = url;
-                btn.download = `handwritten_page_${i + 1}.jpg`;
-                btn.className = 'btn btn-download-jpg btn-full';
-                btn.innerHTML = `<i class="fas fa-file-image"></i> Download Page ${i + 1} (JPG)`;
-                downloadButtons.appendChild(btn);
-            });
-            
-            // ZIP download
-            const zipBtn = document.createElement('a');
-            zipBtn.href = `/api/download/${data.session_id}/all`;
-            zipBtn.download = 'handwritten_notes.zip';
-            zipBtn.className = 'btn btn-download-zip btn-full';
-            zipBtn.innerHTML = '<i class="fas fa-file-archive"></i> Download All Pages (ZIP)';
-            downloadButtons.appendChild(zipBtn);
-        }
-    }
-    
-    // Scroll to download
-    downloadCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
+  try {
+    // Rebuild pages from edited textarea
+    const pages = S.pages.length > 1
+      ? S.pages
+      : [txt];
 
-// ===== PAGE NAVIGATION =====
-function prevPage() {
-    if (state.currentPage > 0) {
-        state.currentPage--;
-        updatePagePreview();
-    }
-}
-
-function nextPage() {
-    if (state.currentPage < state.jpgUrls.length - 1) {
-        state.currentPage++;
-        updatePagePreview();
-    }
-}
-
-function updatePagePreview() {
-    if (state.jpgUrls.length > 0) {
-        const url = state.jpgUrls[state.currentPage];
-        document.getElementById('preview-image').src = url + '?t=' + Date.now();
-        updatePageIndicator();
-    }
-}
-
-function updatePageIndicator() {
-    document.getElementById('page-indicator').textContent = 
-        `Page ${state.currentPage + 1} / ${state.jpgUrls.length}`;
-    document.getElementById('prev-page-btn').disabled = state.currentPage === 0;
-    document.getElementById('next-page-btn').disabled = 
-        state.currentPage === state.jpgUrls.length - 1;
-}
-
-// ===== STEP INDICATOR =====
-function updateStepIndicator(step) {
-    for (let i = 1; i <= 3; i++) {
-        const el = document.getElementById(`step-indicator-${i}`);
-        if (!el) continue;
-        
-        el.classList.remove('active', 'completed');
-        if (i < step) {
-            el.classList.add('completed');
-            el.querySelector('.step-circle').innerHTML = '<i class="fas fa-check"></i>';
-        } else if (i === step) {
-            el.classList.add('active');
-        }
-    }
-}
-
-// ===== CHAR COUNTER =====
-function setupCharCounter() {
-    const textarea = document.getElementById('direct-text');
-    if (textarea) {
-        textarea.addEventListener('input', () => {
-            const count = textarea.value.length;
-            document.getElementById('char-count').textContent = 
-                `${count.toLocaleString()} character${count !== 1 ? 's' : ''}`;
-        });
-    }
-}
-
-function clearText() {
-    document.getElementById('direct-text').value = '';
-    document.getElementById('char-count').textContent = '0 characters';
-}
-
-// ===== RESET =====
-function resetAll() {
-    state.selectedFile = null;
-    state.extractedPages = [];
-    state.layoutData = null;
-    state.sessionId = null;
-    state.currentPage = 0;
-    state.totalPages = 0;
-    state.jpgUrls = [];
-    
-    // Reset UI
-    document.getElementById('file-preview').style.display = 'none';
-    document.getElementById('extract-btn').style.display = 'none';
-    document.getElementById('upload-zone').style.display = 'block';
-    document.getElementById('file-input').value = '';
-    document.getElementById('extracted-card').style.display = 'none';
-    document.getElementById('step-2').style.display = 'none';
-    document.getElementById('download-card').style.display = 'none';
-    document.getElementById('preview-container').style.display = 'none';
-    document.getElementById('empty-preview').style.display = 'block';
-    document.getElementById('preview-controls').style.display = 'none';
-    document.getElementById('direct-text').value = '';
-    document.getElementById('char-count').textContent = '0 characters';
-    document.getElementById('layout-option').style.display = 'none';
-    
-    // Reset step indicator
-    for (let i = 1; i <= 3; i++) {
-        const el = document.getElementById(`step-indicator-${i}`);
-        if (!el) continue;
-        el.classList.remove('active', 'completed');
-        if (i === 1) el.classList.add('active');
-        el.querySelector('.step-circle').innerHTML = i;
-    }
-    
-    // Scroll to top
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    
-    showToast('Ready for a new conversion!', 'success');
-}
-
-// ===== TOAST NOTIFICATIONS =====
-function showToast(message, type = 'info') {
-    const container = document.getElementById('toast-container');
-    const icons = {
-        success: 'fas fa-check-circle',
-        error: 'fas fa-exclamation-circle',
-        warning: 'fas fa-exclamation-triangle',
-        info: 'fas fa-info-circle'
+    const payload = {
+      pages,
+      text         : txt,
+      font_name    : S.font,
+      font_size    : parseInt(id('font-size').value, 10),
+      line_spacing : parseFloat(id('line-spacing').value),
+      ink_color    : S.color,
+      margin       : parseInt(id('margin').value, 10),
+      paper_style  : S.paper,
+      output_format: S.format,
+      page_width   : 794,
+      page_height  : 1123,
+      preserve_layout: !!(id('preserve-layout') &&
+                          id('preserve-layout').checked &&
+                          S.layoutData),
+      layout_data  : S.layoutData || null,
     };
-    
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <i class="${icons[type] || icons.info}"></i>
-        <span class="toast-message">${message}</span>
-        <button class="toast-close" onclick="this.parentElement.remove()">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
-    
-    container.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(100%)';
-        toast.style.transition = 'all 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 4000);
-}
 
-// ===== OVERLAY =====
-function showOverlay(text = 'Processing...') {
-    document.getElementById('overlay-text').textContent = text;
-    document.getElementById('overlay').style.display = 'flex';
-}
+    console.log('Convert payload pages count:', pages.length,
+                'font:', S.font, 'format:', S.format);
 
-function hideOverlay() {
-    document.getElementById('overlay').style.display = 'none';
-}
+    const res  = await fetch('/api/convert', {
+      method  : 'POST',
+      headers : { 'Content-Type': 'application/json' },
+      body    : JSON.stringify(payload),
+    });
 
-// ===== INFO =====
-function showInfo() {
-    showToast('PDF to Handwriting Converter - Built with Python Flask, PIL, PyMuPDF & ReportLab', 'info');
-}
+    // Read raw body first so we can log it on failure
+    const rawBody = await res.text();
+    console.log('Convert raw response (first 300):', rawBody.slice(0, 300));
 
-// ===== KEYBOARD SHORTCUTS =====
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') hideOverlay();
-    
-    // Arrow keys for page navigation when preview is visible
-    if (document.getElementById('preview-container').style.display !== 'none') {
-        if (e.key === 'ArrowLeft') prevPage();
-        if (e.key === 'ArrowRight') nextPage();
+    let data;
+    try {
+      data = JSON.parse(rawBody);
+    } catch (parseErr) {
+      console.error('Full raw response:', rawBody);
+      throw new Error(
+        `Server response is not valid JSON. ` +
+        `Status ${res.status}. ` +
+        `Body starts with: "${rawBody.slice(0, 120)}"`
+      );
     }
+
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    // ── Success ──────────────────────────────────────────────
+    S.sessionId   = data.session_id;
+    S.jpgUrls     = data.jpg_urls || [];
+    S.currentPage = 0;
+
+    const pageCount = data.page_count || pages.length || 1;
+
+    await showPreview(data);
+    buildDownloadUI(data, pageCount);
+    setStep(3);
+    toast('✅ Handwriting generated!', 'success');
+
+  } catch (err) {
+    console.error('Conversion error:', err);
+    toast(`Conversion failed: ${err.message}`, 'error');
+    showState('empty');
+  } finally {
+    S.converting = false;
+    id('convert-btn').disabled = false;
+    stopLoadingAnim();
+  }
+}
+
+/* ── Preview ────────────────────────────────────────────────── */
+async function showPreview(data) {
+  let url = data.preview_url || '';
+  if (!url && data.pdf_url) url = `/api/preview/${data.session_id}`;
+  if (!url && data.jpg_urls && data.jpg_urls.length)
+    url = data.jpg_urls[0];
+
+  if (!url) { showState('empty'); return; }
+
+  return new Promise(resolve => {
+    const img = id('preview-image');
+    const bust = `?t=${Date.now()}`;
+
+    img.onload = () => {
+      showState('preview');
+      if (S.jpgUrls.length > 1) {
+        id('preview-controls').style.display = 'flex';
+        refreshPageLabel();
+      }
+      resolve();
+    };
+    img.onerror = () => {
+      showState('done-no-preview');
+      resolve();
+    };
+    img.src = url + bust;
+  });
+}
+
+function showState(state) {
+  id('empty-preview').style.display   = state === 'empty'   ? 'block' : 'none';
+  id('preview-loading').style.display = state === 'loading' ? 'flex'  : 'none';
+  id('preview-container').style.display =
+    state === 'preview' ? 'block' : 'none';
+
+  if (state === 'done-no-preview') {
+    id('empty-preview').style.display = 'block';
+    id('empty-preview').innerHTML = `
+      <div class="empty-icon">
+        <i class="fas fa-check-circle" style="color:var(--success)"></i>
+      </div>
+      <h3>Handwriting generated!</h3>
+      <p>Download your file below.</p>`;
+  }
+}
+
+/* ── Page navigation ────────────────────────────────────────── */
+function prevPage() {
+  if (S.currentPage > 0) { S.currentPage--; flipPage(); }
+}
+function nextPage() {
+  if (S.currentPage < S.jpgUrls.length - 1) { S.currentPage++; flipPage(); }
+}
+function flipPage() {
+  const img = id('preview-image');
+  img.src   = S.jpgUrls[S.currentPage] + `?t=${Date.now()}`;
+  refreshPageLabel();
+}
+function refreshPageLabel() {
+  id('page-indicator').textContent =
+    `Page ${S.currentPage + 1} / ${S.jpgUrls.length}`;
+  id('prev-page-btn').disabled = S.currentPage === 0;
+  id('next-page-btn').disabled = S.currentPage === S.jpgUrls.length - 1;
+}
+
+/* ── Download UI ────────────────────────────────────────────── */
+function buildDownloadUI(data, pageCount) {
+  const card    = id('download-card');
+  const buttons = id('download-buttons');
+
+  id('dl-pages').textContent  = pageCount;
+  id('dl-format').textContent = (data.output_format || 'pdf').toUpperCase();
+
+  buttons.innerHTML = '';
+
+  if (data.pdf_url) {
+    buttons.appendChild(mkDownloadBtn(
+      data.pdf_url,
+      'handwritten_notes.pdf',
+      'btn-dl-pdf',
+      'fas fa-file-pdf',
+      'Download PDF  (all pages)'
+    ));
+  }
+
+  if (data.jpg_urls && data.jpg_urls.length === 1) {
+    buttons.appendChild(mkDownloadBtn(
+      data.jpg_urls[0],
+      'handwritten_page_1.jpg',
+      'btn-dl-jpg',
+      'fas fa-file-image',
+      'Download JPG Image'
+    ));
+  } else if (data.jpg_urls && data.jpg_urls.length > 1) {
+    data.jpg_urls.forEach((u, i) => {
+      buttons.appendChild(mkDownloadBtn(
+        u,
+        `handwritten_page_${i+1}.jpg`,
+        'btn-dl-jpg',
+        'fas fa-file-image',
+        `Download Page ${i+1} (JPG)`
+      ));
+    });
+    buttons.appendChild(mkDownloadBtn(
+      `/api/download/${data.session_id}/all`,
+      'handwritten_notes.zip',
+      'btn-dl-zip',
+      'fas fa-file-archive',
+      'Download All Pages (ZIP)'
+    ));
+  }
+
+  card.style.display = 'block';
+  card.scrollIntoView({ behavior:'smooth', block:'nearest' });
+}
+
+function mkDownloadBtn(href, name, cls, icon, label) {
+  const a = document.createElement('a');
+  a.href         = href;
+  a.download     = name;
+  a.className    = `btn ${cls} btn-full`;
+  a.innerHTML    = `<i class="${icon}"></i> ${label}`;
+  return a;
+}
+
+/* ── Loading animation ──────────────────────────────────────── */
+let _loadTmr = null;
+const _loadMsgs = [
+  'Loading handwriting fonts…',
+  'Sketching your text…',
+  'Adding paper texture…',
+  'Applying ink effects…',
+  'Assembling pages…',
+  'Almost done…',
+];
+function startLoadingAnim() {
+  let i = 0;
+  id('loading-text').textContent = _loadMsgs[0];
+  _loadTmr = setInterval(() => {
+    i = (i + 1) % _loadMsgs.length;
+    id('loading-text').textContent = _loadMsgs[i];
+  }, 1800);
+}
+function stopLoadingAnim() {
+  clearInterval(_loadTmr);
+  _loadTmr = null;
+}
+
+/* ── Char counter ───────────────────────────────────────────── */
+function initCharCounter() {
+  const ta = id('direct-text');
+  if (!ta) return;
+  ta.addEventListener('input', () => {
+    id('char-count').textContent =
+      `${ta.value.length.toLocaleString()} characters`;
+  });
+}
+function clearText() {
+  id('direct-text').value = '';
+  id('char-count').textContent = '0 characters';
+}
+
+/* ── Step indicator ─────────────────────────────────────────── */
+function setStep(n) {
+  for (let i = 1; i <= 3; i++) {
+    const el = id(`step-indicator-${i}`);
+    if (!el) continue;
+    const circle = el.querySelector('.step-circle');
+    el.classList.remove('active','completed');
+    if (i < n)      { el.classList.add('completed'); circle.innerHTML = '<i class="fas fa-check"></i>'; }
+    else if (i===n) { el.classList.add('active');    circle.textContent = i; }
+    else            { circle.textContent = i; }
+  }
+}
+
+/* ── Reset ──────────────────────────────────────────────────── */
+function resetAll() {
+  Object.assign(S, {
+    file:null, pages:[], layoutData:null,
+    sessionId:null, jpgUrls:[], currentPage:0,
+  });
+
+  id('upload-zone').style.display     = 'block';
+  id('file-preview').style.display    = 'none';
+  id('extract-btn').style.display     = 'none';
+  id('file-input').value              = '';
+  id('layout-opt').style.display      = 'none';
+  id('extracted-card').style.display  = 'none';
+  id('step-2').style.display          = 'none';
+  id('download-card').style.display   = 'none';
+  id('preview-controls').style.display= 'none';
+  id('direct-text').value             = '';
+  id('char-count').textContent        = '0 characters';
+
+  showState('empty');
+  setStep(1);
+  window.scrollTo({ top:0, behavior:'smooth' });
+  toast('Ready for a new conversion!', 'success');
+}
+
+/* ── Toast ──────────────────────────────────────────────────── */
+function toast(msg, type='info') {
+  const icons = {
+    success:'fas fa-check-circle',
+    error:'fas fa-exclamation-circle',
+    warning:'fas fa-exclamation-triangle',
+    info:'fas fa-info-circle',
+  };
+  const div = document.createElement('div');
+  div.className = `toast ${type}`;
+  div.innerHTML = `
+    <i class="${icons[type]||icons.info}"></i>
+    <span class="toast-msg">${esc(msg)}</span>
+    <button onclick="this.parentElement.remove()">
+      <i class="fas fa-times"></i>
+    </button>`;
+  id('toast-container').appendChild(div);
+  setTimeout(() => {
+    div.style.opacity   = '0';
+    div.style.transform = 'translateX(110%)';
+    div.style.transition= 'all .3s';
+    setTimeout(()=>div.remove(), 320);
+  }, 5000);
+}
+
+/* ── Overlay ────────────────────────────────────────────────── */
+function showOverlay(txt='Processing…') {
+  id('overlay-text').textContent = txt;
+  id('overlay').style.display    = 'flex';
+}
+function hideOverlay() {
+  id('overlay').style.display = 'none';
+}
+
+/* ── Utilities ──────────────────────────────────────────────── */
+function id(x)       { return document.getElementById(x); }
+function esc(s)      { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function fmtSize(b)  {
+  if (b < 1024)         return `${b} B`;
+  if (b < 1024**2)      return `${(b/1024).toFixed(1)} KB`;
+  return `${(b/1024**2).toFixed(1)} MB`;
+}
+async function fetchJSON(url, opts={}) {
+  const r = await fetch(url, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); }
+  catch(e) { throw new Error(`Invalid JSON from ${url}: ${t.slice(0,200)}`); }
+}
+
+/* ── Keyboard shortcuts ─────────────────────────────────────── */
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') hideOverlay();
+  if (id('preview-container').style.display !== 'none') {
+    if (e.key === 'ArrowLeft')  prevPage();
+    if (e.key === 'ArrowRight') nextPage();
+  }
 });
