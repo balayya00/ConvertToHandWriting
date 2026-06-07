@@ -5,7 +5,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: bash build.sh
-    startCommand: gunicorn app:app --timeout 180 --workers 2 --bind 0.0.0.0:$PORT --preload
+    startCommand: gunicorn app:app --timeout 120 --workers 2 --bind 0.0.0.0:$PORT --preload --log-level info
     envVars:
       - key: FLASK_ENV
         value: production
