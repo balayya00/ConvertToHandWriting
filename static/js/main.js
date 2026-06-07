@@ -1,90 +1,187 @@
 /* ============================================================
-   PDF to Handwriting Converter  –  main.js  v3.0
+   PDF to Handwriting – main.js v4.0
+   Live font previews via Google Fonts CSS classes
    ============================================================ */
 'use strict';
 
-/* ── State ─────────────────────────────────────────────────── */
+/* ── State ───────────────────────────────────────────────────── */
 const S = {
-  file          : null,
-  pages         : [],
-  layoutData    : null,
-  font          : 'Kalam',
-  paper         : 'ruled',
-  color         : 'blue',
-  format        : 'pdf',
-  sessionId     : null,
-  jpgUrls       : [],
-  currentPage   : 0,
-  converting    : false,
+  file:null, pages:[], layoutData:null,
+  font:'Kalam', paper:'ruled', color:'blue', format:'pdf',
+  sessionId:null, jpgUrls:[], currentPage:0, converting:false,
+  allFonts:[], activeCat:'all',
 };
 
-/* ── Boot ───────────────────────────────────────────────────── */
+/* ── CSS font-family map (matches <style> block in HTML) ─────── */
+const FONT_CSS = {
+  HomemadeApple:        'Homemade Apple',
+  DancingScript:        'Dancing Script',
+  GreatVibes:           'Great Vibes',
+  Allura:               'Allura',
+  Sacramento:           'Sacramento',
+  Parisienne:           'Parisienne',
+  Pinyon_Script:        'Pinyon Script',
+  Tangerine:            'Tangerine',
+  AlexBrush:            'Alex Brush',
+  Yellowtail:           'Yellowtail',
+  Satisfy:              'Satisfy',
+  Kalam:                'Kalam',
+  Caveat:               'Caveat',
+  Patrick_Hand:         'Patrick Hand',
+  Indie_Flower:         'Indie Flower',
+  Shadows_Into_Light:   'Shadows Into Light',
+  Nothing_You_Could_Do: 'Nothing You Could Do',
+  Covered_By_Your_Grace:'Covered By Your Grace',
+  GloriaHallelujah:     'Gloria Hallelujah',
+  Architects_Daughter:  'Architects Daughter',
+  Permanent_Marker:     'Permanent Marker',
+  Rock_Salt:            'Rock Salt',
+  Pacifico:             'Pacifico',
+  Damion:               'Damion',
+  Marck_Script:         'Marck Script',
+  Engagement:           'Engagement',
+  Euphoria_Script:      'Euphoria Script',
+  Italianno:            'Italianno',
+  Norican:              'Norican',
+  Rouge_Script:         'Rouge Script',
+  Clicker_Script:       'Clicker Script',
+  Kurale:               'Kurale',
+  Amatic_SC:            'Amatic SC',
+  Dr_Sugiyama:          'Dr Sugiyama',
+  Qwitcher_Grypen:      'Qwitcher Grypen',
+};
+
+/* Category keywords to map style strings */
+const CAT_MAP = {
+  Calligraphy: ['calligraph','script','formal','copperplate','italic','victorian',
+                'french','wedding','romantic','passionate','japanese','gothic',
+                'fluid','artistic','flowing','fine','brush','retro'],
+  Cursive:     ['cursive','cursive','elegant','smooth','dreamy','love letter'],
+  Natural:     ['natural','casual','everyday','bubbly','light','comic','technical',
+                'condensed','typewriter','decorative'],
+  Bold:        ['bold','marker','rough','textured'],
+  Print:       ['print','printing','draft'],
+};
+
+function getCategory(style) {
+  const s = (style || '').toLowerCase();
+  for (const [cat, keywords] of Object.entries(CAT_MAP)) {
+    if (keywords.some(k => s.includes(k))) return cat;
+  }
+  return 'Natural';
+}
+
+/* Preview sample texts per style */
+const PREVIEWS = {
+  Calligraphy: 'Beautiful Writing',
+  Cursive:     'Hello World',
+  Natural:     'My Handwriting',
+  Bold:        'Bold Notes',
+  Print:       'Clear Print',
+};
+
+/* ── Boot ────────────────────────────────────────────────────── */
 document.addEventListener('DOMContentLoaded', () => {
   loadFonts();
   initCharCounter();
-  setFormat(document.querySelector('.format-option[data-value="pdf"]'));
-  setColor(document.querySelector('.color-option[data-value="blue"]'));
-  setPaper(document.querySelector('.paper-option[data-value="ruled"]'));
+  /* Default selections already set in HTML via class="selected/active" */
+  S.format = 'pdf';
+  S.color  = 'blue';
+  S.paper  = 'ruled';
 });
 
-/* ── Font loading ───────────────────────────────────────────── */
+/* ── Font loading ─────────────────────────────────────────────── */
 async function loadFonts() {
-  const grid = id('font-grid');
   try {
-    const res  = await fetchJSON('/api/fonts');
-    const fonts = (res && res.fonts) ? res.fonts : [];
-    if (!fonts.length) throw new Error('empty');
-    renderFonts(fonts);
-  } catch (e) {
-    grid.innerHTML = fallbackFontHTML();
-    bindFontCards();
+    const res = await fetch('/api/fonts');
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); } catch(e) { throw new Error('Bad JSON from /api/fonts'); }
+
+    if (data.fonts && data.fonts.length) {
+      S.allFonts = data.fonts;
+      renderFonts(data.fonts);
+    } else {
+      throw new Error('No fonts in response');
+    }
+  } catch(e) {
+    console.warn('Font API error:', e);
+    /* Build fallback list from FONT_CSS keys */
+    S.allFonts = Object.keys(FONT_CSS).map(key => ({
+      key, display: key.replace(/_/g,' '),
+      emoji: '✍️', style: 'Natural', available: false,
+    }));
+    renderFonts(S.allFonts);
   }
 }
 
-function renderFonts(fonts) {
-  const grid = id('font-grid');
-  grid.innerHTML = fonts.map(f => `
-    <div class="font-card ${f.key === S.font ? 'selected' : ''}"
-         data-key="${esc(f.key)}"
-         onclick="pickFont(this)">
-      <div class="fc-name">${esc(f.display_name)}</div>
-      <div class="fc-desc">${esc(f.description)}</div>
-      ${!f.available ? '<div class="fc-dl"><i class="fas fa-download"></i> Queued</div>' : ''}
-    </div>`).join('');
+function renderFonts(fonts, filter='') {
+  const grid = $('font-grid');
+  grid.innerHTML = '';
+
+  const q   = filter.toLowerCase();
+  const cat = S.activeCat;
+
+  let shown = 0;
+  fonts.forEach(f => {
+    const fCat = getCategory(f.style || '');
+    const matchCat  = (cat === 'all') || (fCat === cat);
+    const matchText = !q ||
+      f.display.toLowerCase().includes(q) ||
+      (f.style||'').toLowerCase().includes(q);
+
+    if (!matchCat || !matchText) return;
+
+    shown++;
+    const isSelected = f.key === S.font;
+    const cssFamily  = FONT_CSS[f.key] || f.display;
+    const previewTxt = PREVIEWS[fCat] || 'Handwriting';
+
+    const card = document.createElement('div');
+    card.className = `font-card${isSelected ? ' selected' : ''}`;
+    card.dataset.key = f.key;
+    card.dataset.cat = fCat;
+
+    card.innerHTML = `
+      <div class="fc-emoji">${esc(f.emoji || '✍️')}</div>
+      <div class="fc-name">${esc(f.display)}</div>
+      <div class="fc-preview ff-${esc(f.key)}"
+           style="font-family:'${cssFamily}',cursive">${esc(previewTxt)}</div>
+      <div class="fc-style">${esc(f.style || '')}</div>`;
+
+    card.addEventListener('click', () => pickFont(card, f));
+    grid.appendChild(card);
+  });
+
+  if (shown === 0) {
+    grid.innerHTML = '<div class="loading-fonts">No fonts match your search.</div>';
+  }
 }
 
-function fallbackFontHTML() {
-  const list = [
-    ['HomemadeApple','✍️ Homemade Apple','Classic cursive'],
-    ['Kalam',        '🖊️ Kalam',         'Natural pen'],
-    ['Caveat',       '📝 Caveat',         'Casual writing'],
-    ['DancingScript','💫 Dancing Script', 'Elegant script'],
-    ['Pacifico',     '🌊 Pacifico',       'Bold casual'],
-    ['IndieFlower',  '🌸 Indie Flower',   'Bubbly cute'],
-    ['PatrickHand',  '📋 Patrick Hand',   'Neat print'],
-    ['GloriaHallelujah','✨ Gloria',      'Comic style'],
-  ];
-  return list.map(([k,n,d]) => `
-    <div class="font-card ${k===S.font?'selected':''}"
-         data-key="${k}" onclick="pickFont(this)">
-      <div class="fc-name">${n}</div>
-      <div class="fc-desc">${d}</div>
-    </div>`).join('');
-}
-
-function bindFontCards() {
-  id('font-grid').querySelectorAll('.font-card')
-    .forEach(c => { c.onclick = () => pickFont(c); });
-}
-
-function pickFont(card) {
+function pickFont(card, fontInfo) {
   document.querySelectorAll('.font-card').forEach(c => c.classList.remove('selected'));
   card.classList.add('selected');
-  S.font = card.dataset.key;
-  toast(`Font: ${card.dataset.key.replace(/_/g,' ')}`, 'info');
+  S.font = fontInfo.key;
+
+  /* Update label */
+  const lbl = $('selected-font-name');
+  if (lbl) lbl.textContent = fontInfo.display;
+
+  toast(`Font: ${fontInfo.display}`, 'info');
 }
 
-/* ── Tabs ───────────────────────────────────────────────────── */
+function filterFonts(q) {
+  renderFonts(S.allFonts, q);
+}
+
+function filterCat(btn, cat) {
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  S.activeCat = cat;
+  renderFonts(S.allFonts, $('font-search').value || '');
+}
+
+/* ── Tabs ────────────────────────────────────────────────────── */
 function switchTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.tab === tabId));
@@ -92,47 +189,44 @@ function switchTab(tabId) {
     c.classList.toggle('active', c.id === tabId));
 }
 
-/* ── Drag-and-drop / file select ────────────────────────────── */
-function onDragOver(e)  { e.preventDefault(); id('upload-zone').classList.add('drag-over'); }
-function onDragLeave()  { id('upload-zone').classList.remove('drag-over'); }
+/* ── Drag-and-drop ───────────────────────────────────────────── */
+function onDragOver(e)  { e.preventDefault(); $('upload-zone').classList.add('drag-over'); }
+function onDragLeave()  { $('upload-zone').classList.remove('drag-over'); }
 function onDrop(e)      { e.preventDefault(); onDragLeave(); processFile(e.dataTransfer.files[0]); }
-function onFileChange(i){ if (i.files[0]) processFile(i.files[0]); }
+function onFileChange(i){ if(i.files[0]) processFile(i.files[0]); }
 
 function processFile(file) {
   if (!file) return;
   const ext = file.name.split('.').pop().toLowerCase();
-  if (!['pdf','jpg','jpeg','png'].includes(ext)) {
+  if (!['pdf','jpg','jpeg','png'].includes(ext))
     return toast('Only PDF, JPG, PNG supported', 'error');
-  }
-  if (file.size > 50*1024*1024) {
+  if (file.size > 50*1024*1024)
     return toast('Max file size is 50 MB', 'error');
-  }
+
   S.file = file;
+  $('upload-zone').style.display  = 'none';
+  $('file-preview').style.display = 'block';
+  $('extract-btn').style.display  = 'block';
 
-  id('upload-zone').style.display = 'none';
-  id('file-preview').style.display = 'block';
-  id('extract-btn').style.display  = 'block';
-
-  const icon = id('file-type-icon');
-  icon.className = ext === 'pdf' ? 'fas fa-file-pdf' : 'fas fa-file-image';
-  icon.style.color = ext === 'pdf' ? '#ef4444' : '#3b82f6';
-  id('file-name').textContent = file.name;
-  id('file-size').textContent = fmtSize(file.size);
-
-  if (ext === 'pdf') id('layout-opt').style.display = 'block';
+  const ico = $('file-type-icon');
+  ico.className   = ext === 'pdf' ? 'fas fa-file-pdf' : 'fas fa-file-image';
+  ico.style.color = ext === 'pdf' ? '#ef4444' : '#3b82f6';
+  $('file-name').textContent = file.name;
+  $('file-size').textContent = fmtSize(file.size);
+  if (ext === 'pdf') $('layout-opt').style.display = 'block';
   toast(`File ready: ${file.name}`, 'success');
 }
 
 function removeFile() {
   S.file = null;
-  id('upload-zone').style.display = 'block';
-  id('file-preview').style.display = 'none';
-  id('extract-btn').style.display  = 'none';
-  id('file-input').value = '';
-  id('layout-opt').style.display = 'none';
+  $('upload-zone').style.display  = 'block';
+  $('file-preview').style.display = 'none';
+  $('extract-btn').style.display  = 'none';
+  $('file-input').value           = '';
+  $('layout-opt').style.display   = 'none';
 }
 
-/* ── Extract ────────────────────────────────────────────────── */
+/* ── Extract ─────────────────────────────────────────────────── */
 async function extractText() {
   if (!S.file) return toast('Select a file first', 'warning');
   showOverlay('Extracting text…');
@@ -142,423 +236,325 @@ async function extractText() {
     fd.append('input_type', 'file');
 
     const res  = await fetch('/api/extract', { method:'POST', body:fd });
-    const text = await res.text();          // raw text first
-
+    const raw  = await res.text();
     let data;
-    try { data = JSON.parse(text); }
+    try { data = JSON.parse(raw); }
     catch(e) {
-      console.error('Extract raw response:', text.slice(0,500));
-      throw new Error('Server returned invalid JSON during extraction');
+      console.error('Extract raw:', raw.slice(0,400));
+      throw new Error('Server returned non-JSON during extraction');
     }
-
     if (!res.ok || data.error) throw new Error(data.error || 'Extraction failed');
 
     S.pages      = data.pages || [data.text || ''];
     S.layoutData = data.layout_data || null;
 
-    id('extracted-text').value = data.text || '';
-    id('extracted-card').style.display = 'block';
-    id('step-2').style.display         = 'block';
-    id('page-count-badge').textContent =
-      `${data.page_count || 1} page${data.page_count !== 1 ? 's' : ''}`;
+    $('extracted-text').value         = data.text || '';
+    $('extracted-card').style.display = 'block';
+    $('step-2').style.display         = 'block';
+    $('page-count-badge').textContent =
+      `${data.page_count||1} page${data.page_count!==1?'s':''}`;
 
     setStep(2);
-    id('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
-    toast(`Extracted ${data.page_count || 1} page(s)`, 'success');
+    $('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
+    toast(`Extracted ${data.page_count||1} page(s)`, 'success');
   } catch(e) {
     console.error(e);
     toast(`Extraction error: ${e.message}`, 'error');
-  } finally {
-    hideOverlay();
-  }
+  } finally { hideOverlay(); }
 }
 
 function useDirectText() {
-  const txt = id('direct-text').value.trim();
+  const txt = ($('direct-text').value || '').trim();
   if (!txt) return toast('Enter some text first', 'warning');
 
-  S.pages      = [txt];
-  S.layoutData = null;
-
-  id('extracted-text').value         = txt;
-  id('extracted-card').style.display = 'block';
-  id('step-2').style.display         = 'block';
-  id('page-count-badge').textContent = '1 page';
-
+  S.pages = [txt]; S.layoutData = null;
+  $('extracted-text').value         = txt;
+  $('extracted-card').style.display = 'block';
+  $('step-2').style.display         = 'block';
+  $('page-count-badge').textContent = '1 page';
   setStep(2);
-  id('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
+  $('step-2').scrollIntoView({ behavior:'smooth', block:'nearest' });
   toast('Text ready!', 'success');
 }
 
-/* ── Settings helpers ───────────────────────────────────────── */
+/* ── Settings ────────────────────────────────────────────────── */
 function setPaper(el) {
-  document.querySelectorAll('.paper-option').forEach(o => o.classList.remove('active'));
-  el.classList.add('active');
-  S.paper = el.dataset.value;
+  document.querySelectorAll('.paper-option').forEach(o=>o.classList.remove('active'));
+  el.classList.add('active'); S.paper = el.dataset.value;
 }
 function setColor(el) {
-  document.querySelectorAll('.color-option').forEach(o => o.classList.remove('active'));
-  el.classList.add('active');
-  S.color = el.dataset.value;
+  document.querySelectorAll('.color-option').forEach(o=>o.classList.remove('active'));
+  el.classList.add('active'); S.color = el.dataset.value;
 }
 function setFormat(el) {
-  document.querySelectorAll('.format-option').forEach(o => o.classList.remove('selected'));
-  el.classList.add('selected');
-  S.format = el.dataset.value;
+  document.querySelectorAll('.format-option').forEach(o=>o.classList.remove('selected'));
+  el.classList.add('selected'); S.format = el.dataset.value;
   const r = el.querySelector('input[type=radio]');
   if (r) r.checked = true;
 }
-
-function updateSlider(sliderId, valId) {
-  const v = parseFloat(id(sliderId).value);
-  id(valId).textContent = Number.isInteger(v) ? v : v.toFixed(1);
+function updateSlider(id, vid) {
+  const v = parseFloat($(id).value);
+  $(vid).textContent = Number.isInteger(v) ? v : v.toFixed(1);
 }
 
-/* ── Convert ────────────────────────────────────────────────── */
+/* ── Convert ─────────────────────────────────────────────────── */
 async function convertToHandwriting() {
   if (S.converting) return;
-
-  const txt = (id('extracted-text').value || '').trim();
+  const txt = ($('extracted-text').value || '').trim();
   if (!txt) return toast('No text to convert – extract or type some text first', 'warning');
 
   S.converting = true;
-  id('convert-btn').disabled = true;
+  $('convert-btn').disabled = true;
 
   showState('loading');
-  id('download-card').style.display = 'none';
-
+  $('download-card').style.display = 'none';
   startLoadingAnim();
 
   try {
-    // Rebuild pages from edited textarea
-    const pages = S.pages.length > 1
-      ? S.pages
-      : [txt];
+    const pages = S.pages.length > 1 ? S.pages : [txt];
 
     const payload = {
       pages,
-      text         : txt,
-      font_name    : S.font,
-      font_size    : parseInt(id('font-size').value, 10),
-      line_spacing : parseFloat(id('line-spacing').value),
-      ink_color    : S.color,
-      margin       : parseInt(id('margin').value, 10),
-      paper_style  : S.paper,
-      output_format: S.format,
-      page_width   : 794,
-      page_height  : 1123,
-      preserve_layout: !!(id('preserve-layout') &&
-                          id('preserve-layout').checked &&
-                          S.layoutData),
-      layout_data  : S.layoutData || null,
+      text          : txt,
+      font_name     : S.font,
+      font_size     : parseInt($('font-size').value, 10),
+      line_spacing  : parseFloat($('line-spacing').value),
+      ink_color     : S.color,
+      margin        : parseInt($('margin').value, 10),
+      paper_style   : S.paper,
+      output_format : S.format,
+      page_width    : 794,
+      page_height   : 1123,
+      preserve_layout: !!(
+        $('preserve-layout') && $('preserve-layout').checked && S.layoutData
+      ),
+      layout_data   : S.layoutData || null,
     };
 
-    console.log('Convert payload pages count:', pages.length,
-                'font:', S.font, 'format:', S.format);
+    console.log('Sending convert request:',
+      `font=${S.font} fmt=${S.format} pages=${pages.length}`);
 
-    const res  = await fetch('/api/convert', {
-      method  : 'POST',
-      headers : { 'Content-Type': 'application/json' },
-      body    : JSON.stringify(payload),
+    const res = await fetch('/api/convert', {
+      method : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body   : JSON.stringify(payload),
     });
 
-    // Read raw body first so we can log it on failure
-    const rawBody = await res.text();
-    console.log('Convert raw response (first 300):', rawBody.slice(0, 300));
+    const raw = await res.text();
+    console.log('Convert response (first 300):', raw.slice(0,300));
 
     let data;
-    try {
-      data = JSON.parse(rawBody);
-    } catch (parseErr) {
-      console.error('Full raw response:', rawBody);
+    try { data = JSON.parse(raw); }
+    catch(e) {
+      console.error('Full response:', raw);
       throw new Error(
-        `Server response is not valid JSON. ` +
-        `Status ${res.status}. ` +
-        `Body starts with: "${rawBody.slice(0, 120)}"`
+        `Server returned invalid JSON (HTTP ${res.status}). ` +
+        `Starts with: "${raw.slice(0,100)}"`
       );
     }
 
-    if (!res.ok || data.error) {
-      throw new Error(data.error || `HTTP ${res.status}`);
-    }
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
 
-    // ── Success ──────────────────────────────────────────────
     S.sessionId   = data.session_id;
     S.jpgUrls     = data.jpg_urls || [];
     S.currentPage = 0;
 
     const pageCount = data.page_count || pages.length || 1;
-
     await showPreview(data);
     buildDownloadUI(data, pageCount);
     setStep(3);
     toast('✅ Handwriting generated!', 'success');
 
-  } catch (err) {
-    console.error('Conversion error:', err);
-    toast(`Conversion failed: ${err.message}`, 'error');
+  } catch(e) {
+    console.error('Conversion error:', e);
+    toast(`Conversion failed: ${e.message}`, 'error');
     showState('empty');
   } finally {
     S.converting = false;
-    id('convert-btn').disabled = false;
+    $('convert-btn').disabled = false;
     stopLoadingAnim();
   }
 }
 
-/* ── Preview ────────────────────────────────────────────────── */
+/* ── Preview display ─────────────────────────────────────────── */
 async function showPreview(data) {
   let url = data.preview_url || '';
-  if (!url && data.pdf_url) url = `/api/preview/${data.session_id}`;
-  if (!url && data.jpg_urls && data.jpg_urls.length)
-    url = data.jpg_urls[0];
-
-  if (!url) { showState('empty'); return; }
+  if (!url && data.pdf_url)                    url = `/api/preview/${data.session_id}`;
+  if (!url && data.jpg_urls && data.jpg_urls.length) url = data.jpg_urls[0];
+  if (!url) { showState('done-no-preview'); return; }
 
   return new Promise(resolve => {
-    const img = id('preview-image');
-    const bust = `?t=${Date.now()}`;
-
+    const img  = $('preview-image');
     img.onload = () => {
       showState('preview');
       if (S.jpgUrls.length > 1) {
-        id('preview-controls').style.display = 'flex';
+        $('preview-controls').style.display = 'flex';
         refreshPageLabel();
       }
       resolve();
     };
-    img.onerror = () => {
-      showState('done-no-preview');
-      resolve();
-    };
-    img.src = url + bust;
+    img.onerror = () => { showState('done-no-preview'); resolve(); };
+    img.src = url + '?t=' + Date.now();
   });
 }
 
 function showState(state) {
-  id('empty-preview').style.display   = state === 'empty'   ? 'block' : 'none';
-  id('preview-loading').style.display = state === 'loading' ? 'flex'  : 'none';
-  id('preview-container').style.display =
-    state === 'preview' ? 'block' : 'none';
+  $('empty-preview').style.display   = (state==='empty'||state==='done-no-preview') ? 'block' : 'none';
+  $('preview-loading').style.display = state==='loading'  ? 'flex'  : 'none';
+  $('preview-container').style.display = state==='preview'? 'block' : 'none';
 
   if (state === 'done-no-preview') {
-    id('empty-preview').style.display = 'block';
-    id('empty-preview').innerHTML = `
+    $('empty-preview').innerHTML = `
       <div class="empty-icon">
-        <i class="fas fa-check-circle" style="color:var(--success)"></i>
+        <i class="fas fa-check-circle" style="color:var(--ok)"></i>
       </div>
-      <h3>Handwriting generated!</h3>
-      <p>Download your file below.</p>`;
+      <h3>Generated!</h3><p>Download your file below.</p>`;
   }
 }
 
-/* ── Page navigation ────────────────────────────────────────── */
-function prevPage() {
-  if (S.currentPage > 0) { S.currentPage--; flipPage(); }
-}
-function nextPage() {
-  if (S.currentPage < S.jpgUrls.length - 1) { S.currentPage++; flipPage(); }
-}
+/* ── Page nav ────────────────────────────────────────────────── */
+function prevPage() { if(S.currentPage>0){ S.currentPage--; flipPage(); } }
+function nextPage() { if(S.currentPage<S.jpgUrls.length-1){ S.currentPage++; flipPage(); } }
 function flipPage() {
-  const img = id('preview-image');
-  img.src   = S.jpgUrls[S.currentPage] + `?t=${Date.now()}`;
+  $('preview-image').src = S.jpgUrls[S.currentPage]+'?t='+Date.now();
   refreshPageLabel();
 }
 function refreshPageLabel() {
-  id('page-indicator').textContent =
-    `Page ${S.currentPage + 1} / ${S.jpgUrls.length}`;
-  id('prev-page-btn').disabled = S.currentPage === 0;
-  id('next-page-btn').disabled = S.currentPage === S.jpgUrls.length - 1;
+  $('page-indicator').textContent = `${S.currentPage+1} / ${S.jpgUrls.length}`;
+  $('prev-page-btn').disabled = S.currentPage === 0;
+  $('next-page-btn').disabled = S.currentPage === S.jpgUrls.length-1;
 }
 
-/* ── Download UI ────────────────────────────────────────────── */
+/* ── Download UI ─────────────────────────────────────────────── */
 function buildDownloadUI(data, pageCount) {
-  const card    = id('download-card');
-  const buttons = id('download-buttons');
+  $('dl-pages').textContent  = pageCount;
+  $('dl-format').textContent = (data.output_format||'pdf').toUpperCase();
+  $('dl-font').textContent   = S.font.replace(/_/g,' ').slice(0,10);
 
-  id('dl-pages').textContent  = pageCount;
-  id('dl-format').textContent = (data.output_format || 'pdf').toUpperCase();
-
-  buttons.innerHTML = '';
+  const btn = $('download-buttons');
+  btn.innerHTML = '';
 
   if (data.pdf_url) {
-    buttons.appendChild(mkDownloadBtn(
-      data.pdf_url,
-      'handwritten_notes.pdf',
-      'btn-dl-pdf',
-      'fas fa-file-pdf',
-      'Download PDF  (all pages)'
-    ));
+    btn.appendChild(mkDlBtn(data.pdf_url,'handwritten_notes.pdf',
+      'btn-dl-pdf','fas fa-file-pdf','⬇ Download PDF (All Pages)'));
   }
-
   if (data.jpg_urls && data.jpg_urls.length === 1) {
-    buttons.appendChild(mkDownloadBtn(
-      data.jpg_urls[0],
-      'handwritten_page_1.jpg',
-      'btn-dl-jpg',
-      'fas fa-file-image',
-      'Download JPG Image'
-    ));
+    btn.appendChild(mkDlBtn(data.jpg_urls[0],'handwritten_page_1.jpg',
+      'btn-dl-jpg','fas fa-file-image','⬇ Download JPG Image'));
   } else if (data.jpg_urls && data.jpg_urls.length > 1) {
-    data.jpg_urls.forEach((u, i) => {
-      buttons.appendChild(mkDownloadBtn(
-        u,
-        `handwritten_page_${i+1}.jpg`,
-        'btn-dl-jpg',
-        'fas fa-file-image',
-        `Download Page ${i+1} (JPG)`
-      ));
+    data.jpg_urls.forEach((u,i) => {
+      btn.appendChild(mkDlBtn(u,`handwritten_page_${i+1}.jpg`,
+        'btn-dl-jpg','fas fa-file-image',`⬇ Page ${i+1} (JPG)`));
     });
-    buttons.appendChild(mkDownloadBtn(
+    btn.appendChild(mkDlBtn(
       `/api/download/${data.session_id}/all`,
       'handwritten_notes.zip',
-      'btn-dl-zip',
-      'fas fa-file-archive',
-      'Download All Pages (ZIP)'
-    ));
+      'btn-dl-zip','fas fa-file-archive','⬇ All Pages (ZIP)'));
   }
 
-  card.style.display = 'block';
-  card.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  $('download-card').style.display = 'block';
+  $('download-card').scrollIntoView({ behavior:'smooth', block:'nearest' });
 }
 
-function mkDownloadBtn(href, name, cls, icon, label) {
+function mkDlBtn(href, name, cls, icon, label) {
   const a = document.createElement('a');
-  a.href         = href;
-  a.download     = name;
-  a.className    = `btn ${cls} btn-full`;
-  a.innerHTML    = `<i class="${icon}"></i> ${label}`;
+  a.href = href; a.download = name;
+  a.className = `btn ${cls} btn-full`;
+  a.innerHTML = `<i class="${icon}"></i> ${label}`;
   return a;
 }
 
-/* ── Loading animation ──────────────────────────────────────── */
-let _loadTmr = null;
-const _loadMsgs = [
-  'Loading handwriting fonts…',
-  'Sketching your text…',
-  'Adding paper texture…',
-  'Applying ink effects…',
-  'Assembling pages…',
-  'Almost done…',
+/* ── Loading anim ────────────────────────────────────────────── */
+let _lt = null;
+const _lm = [
+  'Loading handwriting fonts…','Sketching your text…',
+  'Adding paper texture…','Applying ink effects…',
+  'Assembling pages…','Almost done…',
 ];
 function startLoadingAnim() {
-  let i = 0;
-  id('loading-text').textContent = _loadMsgs[0];
-  _loadTmr = setInterval(() => {
-    i = (i + 1) % _loadMsgs.length;
-    id('loading-text').textContent = _loadMsgs[i];
-  }, 1800);
+  let i=0; $('loading-text').textContent=_lm[0];
+  _lt = setInterval(()=>{ i=(i+1)%_lm.length; $('loading-text').textContent=_lm[i]; },1800);
 }
-function stopLoadingAnim() {
-  clearInterval(_loadTmr);
-  _loadTmr = null;
-}
+function stopLoadingAnim() { clearInterval(_lt); _lt=null; }
 
-/* ── Char counter ───────────────────────────────────────────── */
+/* ── Char counter ────────────────────────────────────────────── */
 function initCharCounter() {
-  const ta = id('direct-text');
+  const ta = $('direct-text');
   if (!ta) return;
-  ta.addEventListener('input', () => {
-    id('char-count').textContent =
-      `${ta.value.length.toLocaleString()} characters`;
+  ta.addEventListener('input', ()=>{
+    $('char-count').textContent = `${ta.value.length.toLocaleString()} characters`;
   });
 }
-function clearText() {
-  id('direct-text').value = '';
-  id('char-count').textContent = '0 characters';
-}
+function clearText() { $('direct-text').value=''; $('char-count').textContent='0 characters'; }
 
-/* ── Step indicator ─────────────────────────────────────────── */
+/* ── Step indicator ──────────────────────────────────────────── */
 function setStep(n) {
-  for (let i = 1; i <= 3; i++) {
-    const el = id(`step-indicator-${i}`);
-    if (!el) continue;
-    const circle = el.querySelector('.step-circle');
+  for(let i=1;i<=3;i++){
+    const el=document.getElementById(`step-indicator-${i}`);
+    if(!el) continue;
+    const c=el.querySelector('.step-circle');
     el.classList.remove('active','completed');
-    if (i < n)      { el.classList.add('completed'); circle.innerHTML = '<i class="fas fa-check"></i>'; }
-    else if (i===n) { el.classList.add('active');    circle.textContent = i; }
-    else            { circle.textContent = i; }
+    if(i<n){el.classList.add('completed');c.innerHTML='<i class="fas fa-check"></i>';}
+    else if(i===n){el.classList.add('active');c.textContent=i;}
+    else{c.textContent=i;}
   }
 }
 
-/* ── Reset ──────────────────────────────────────────────────── */
+/* ── Reset ───────────────────────────────────────────────────── */
 function resetAll() {
-  Object.assign(S, {
-    file:null, pages:[], layoutData:null,
-    sessionId:null, jpgUrls:[], currentPage:0,
-  });
-
-  id('upload-zone').style.display     = 'block';
-  id('file-preview').style.display    = 'none';
-  id('extract-btn').style.display     = 'none';
-  id('file-input').value              = '';
-  id('layout-opt').style.display      = 'none';
-  id('extracted-card').style.display  = 'none';
-  id('step-2').style.display          = 'none';
-  id('download-card').style.display   = 'none';
-  id('preview-controls').style.display= 'none';
-  id('direct-text').value             = '';
-  id('char-count').textContent        = '0 characters';
-
+  Object.assign(S,{file:null,pages:[],layoutData:null,
+    sessionId:null,jpgUrls:[],currentPage:0});
+  $('upload-zone').style.display      = 'block';
+  $('file-preview').style.display     = 'none';
+  $('extract-btn').style.display      = 'none';
+  $('file-input').value               = '';
+  $('layout-opt').style.display       = 'none';
+  $('extracted-card').style.display   = 'none';
+  $('step-2').style.display           = 'none';
+  $('download-card').style.display    = 'none';
+  $('preview-controls').style.display = 'none';
+  $('direct-text').value              = '';
+  $('char-count').textContent         = '0 characters';
   showState('empty');
   setStep(1);
-  window.scrollTo({ top:0, behavior:'smooth' });
-  toast('Ready for a new conversion!', 'success');
+  window.scrollTo({top:0,behavior:'smooth'});
+  toast('Ready for a new conversion!','success');
 }
 
-/* ── Toast ──────────────────────────────────────────────────── */
-function toast(msg, type='info') {
-  const icons = {
-    success:'fas fa-check-circle',
-    error:'fas fa-exclamation-circle',
-    warning:'fas fa-exclamation-triangle',
-    info:'fas fa-info-circle',
-  };
-  const div = document.createElement('div');
-  div.className = `toast ${type}`;
-  div.innerHTML = `
-    <i class="${icons[type]||icons.info}"></i>
+/* ── Toast ───────────────────────────────────────────────────── */
+function toast(msg,type='info'){
+  const icons={success:'fas fa-check-circle',error:'fas fa-exclamation-circle',
+    warning:'fas fa-exclamation-triangle',info:'fas fa-info-circle'};
+  const d=document.createElement('div');
+  d.className=`toast ${type}`;
+  d.innerHTML=`<i class="${icons[type]}"></i>
     <span class="toast-msg">${esc(msg)}</span>
-    <button onclick="this.parentElement.remove()">
-      <i class="fas fa-times"></i>
-    </button>`;
-  id('toast-container').appendChild(div);
-  setTimeout(() => {
-    div.style.opacity   = '0';
-    div.style.transform = 'translateX(110%)';
-    div.style.transition= 'all .3s';
-    setTimeout(()=>div.remove(), 320);
-  }, 5000);
+    <button onclick="this.parentElement.remove()"><i class="fas fa-times"></i></button>`;
+  $('toast-container').appendChild(d);
+  setTimeout(()=>{
+    d.style.opacity='0';d.style.transform='translateX(110%)';
+    d.style.transition='all .3s';setTimeout(()=>d.remove(),320);
+  },5000);
 }
 
-/* ── Overlay ────────────────────────────────────────────────── */
-function showOverlay(txt='Processing…') {
-  id('overlay-text').textContent = txt;
-  id('overlay').style.display    = 'flex';
-}
-function hideOverlay() {
-  id('overlay').style.display = 'none';
+/* ── Overlay ─────────────────────────────────────────────────── */
+function showOverlay(t='Processing…'){$('overlay-text').textContent=t;$('overlay').style.display='flex';}
+function hideOverlay(){$('overlay').style.display='none';}
+
+/* ── Utils ───────────────────────────────────────────────────── */
+function $(x){return document.getElementById(x);}
+function esc(s){const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+function fmtSize(b){
+  if(b<1024)return b+' B';
+  if(b<1048576)return (b/1024).toFixed(1)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
 }
 
-/* ── Utilities ──────────────────────────────────────────────── */
-function id(x)       { return document.getElementById(x); }
-function esc(s)      { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-function fmtSize(b)  {
-  if (b < 1024)         return `${b} B`;
-  if (b < 1024**2)      return `${(b/1024).toFixed(1)} KB`;
-  return `${(b/1024**2).toFixed(1)} MB`;
-}
-async function fetchJSON(url, opts={}) {
-  const r = await fetch(url, opts);
-  const t = await r.text();
-  try { return JSON.parse(t); }
-  catch(e) { throw new Error(`Invalid JSON from ${url}: ${t.slice(0,200)}`); }
-}
-
-/* ── Keyboard shortcuts ─────────────────────────────────────── */
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') hideOverlay();
-  if (id('preview-container').style.display !== 'none') {
-    if (e.key === 'ArrowLeft')  prevPage();
-    if (e.key === 'ArrowRight') nextPage();
+/* ── Keyboard ────────────────────────────────────────────────── */
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape') hideOverlay();
+  if($('preview-container').style.display!=='none'){
+    if(e.key==='ArrowLeft')  prevPage();
+    if(e.key==='ArrowRight') nextPage();
   }
 });
