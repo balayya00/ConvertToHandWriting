@@ -1,524 +1,407 @@
-import os
+"""
+Handwriting Generator
+Renders text as realistic handwritten images using PIL/Pillow,
+then assembles them into PDF via PyMuPDF.
+"""
+import io
 import logging
 import random
-import math
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
-import io
+from typing import Any, Dict, List, Optional, Tuple
+
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 logger = logging.getLogger(__name__)
 
-# Paper dimensions (at 96 DPI for screen, 150 DPI for print)
-PAPER_SIZES = {
-    'A4': (794, 1123),      # A4 at 96dpi
-    'Letter': (816, 1056),   # US Letter at 96dpi
-    'A4_150': (1240, 1754),  # A4 at 150dpi
+# ─── Colour palettes ────────────────────────────────────────────────────────
+INK = {
+    "blue":      (10,  10,  200),
+    "dark_blue": (0,   0,   139),
+    "black":     (15,  15,  15),
+    "pencil":    (80,  80,  80),
+    "red":       (180, 10,  10),
+    "green":     (0,   120, 30),
 }
 
-# Color definitions
-INK_COLORS = {
-    'blue': (10, 10, 180),
-    'dark_blue': (0, 0, 139),
-    'black': (20, 20, 20),
-    'dark_black': (0, 0, 0),
-    'red': (180, 0, 0),
-    'green': (0, 128, 0),
-    'pencil': (80, 80, 80),
+PAPER_BG = {
+    "plain":  (255, 255, 255),
+    "ruled":  (255, 255, 252),
+    "cream":  (255, 253, 240),
+    "exam":   (250, 250, 248),
+    "graph":  (252, 252, 255),
+    "yellow": (255, 255, 215),
 }
 
-PAPER_COLORS = {
-    'plain': (255, 255, 255),
-    'ruled': (255, 255, 252),
-    'cream': (255, 253, 240),
-    'exam': (250, 250, 248),
-    'graph': (252, 252, 255),
-    'yellow': (255, 255, 220),
-}
 
-LINE_COLORS = {
-    'plain': None,
-    'ruled': (173, 216, 230),
-    'cream': (200, 200, 180),
-    'exam': (150, 150, 200),
-    'graph': (200, 220, 255),
-    'yellow': (200, 200, 150),
-}
-
+# ─── Main Generator ─────────────────────────────────────────────────────────
 class HandwritingGenerator:
-    """Generate handwritten text images and PDFs"""
-    
-    def __init__(self, fonts_folder: Path, output_folder: Path):
-        self.fonts_folder = Path(fonts_folder)
-        self.output_folder = Path(output_folder)
-        self.output_folder.mkdir(parents=True, exist_ok=True)
-    
-    def _get_font(self, font_name: str, size: int) -> ImageFont.FreeTypeFont:
-        """Load font with fallback handling"""
-        from utils.font_manager import FontManager, HANDWRITING_FONTS
-        
-        fm = FontManager(self.fonts_folder)
-        font_path = fm.get_font_path(font_name)
-        
-        if font_path and os.path.exists(font_path):
-            try:
-                return ImageFont.truetype(font_path, size)
-            except Exception as e:
-                logger.warning(f"Failed to load font {font_name}: {e}")
-        
-        # Try default fonts
-        try:
-            return ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', size)
-        except:
-            return ImageFont.load_default()
-    
-    def _create_paper(self, width: int, height: int, style: str, settings: Dict) -> Image.Image:
-        """Create paper background with appropriate styling"""
-        bg_color = PAPER_COLORS.get(style, PAPER_COLORS['ruled'])
-        img = Image.new('RGB', (width, height), bg_color)
+
+    def __init__(self, fonts_dir: Path, output_dir: Path):
+        self.fonts_dir  = Path(fonts_dir)
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Public ───────────────────────────────────────────────────────────
+
+    def generate_jpg(self, pages: List[str],
+                     settings: Dict, sid: str) -> List[str]:
+        """Render every page as a JPG; return list of saved paths."""
+        paths: List[str] = []
+        pg_idx = 0
+
+        for text in pages:
+            if not text.strip():
+                continue
+            for img in self._render_text(text, settings):
+                dst = self.output_dir / f"{sid}_page_{pg_idx}.jpg"
+                img.save(str(dst), "JPEG", quality=95, dpi=(150, 150))
+                paths.append(str(dst))
+                pg_idx += 1
+
+        return paths
+
+    def generate_pdf(self, pages: List[str],
+                     settings: Dict, sid: str) -> str:
+        """Render pages and combine into a single PDF."""
+        images: List[Image.Image] = []
+        for text in pages:
+            if not text.strip():
+                continue
+            images.extend(self._render_text(text, settings))
+
+        if not images:
+            images = self._render_text("(empty)", settings)
+
+        dst = self.output_dir / f"{sid}.pdf"
+        self._images_to_pdf(images, str(dst))
+        return str(dst)
+
+    # ── Rendering ────────────────────────────────────────────────────────
+
+    def _render_text(self, text: str,
+                     settings: Dict) -> List[Image.Image]:
+        """
+        Wrap text and render one-or-more page images.
+        Automatic page-breaks are inserted when text overflows.
+        """
+        W            = settings.get("page_width",   794)
+        H            = settings.get("page_height", 1123)
+        font_size    = settings.get("font_size",     28)
+        spacing      = settings.get("line_spacing",  1.8)
+        ink_name     = settings.get("ink_color",   "blue")
+        margin       = settings.get("margin",        60)
+        paper_style  = settings.get("paper_style", "ruled")
+        font_name    = settings.get("font_name",   "Kalam")
+
+        ink        = INK.get(ink_name, INK["blue"])
+        font       = self._load_font(font_name, font_size)
+        line_h     = int(font_size * spacing)
+        text_w     = W - 2 * margin - 30   # 30 px for margin line
+        text_top   = margin + 10
+        text_left  = margin + 35
+
+        # Wrap all paragraphs → flat list of visual lines
+        all_lines: List[str] = []
+        for para in text.split("\n"):
+            if para.strip() == "":
+                all_lines.append("")
+            else:
+                all_lines.extend(self._wrap(para, font, text_w))
+
+        # Split into pages
+        lines_per_page = max(1, (H - text_top - margin) // line_h)
+        page_chunks    = [all_lines[i: i + lines_per_page]
+                          for i in range(0, max(1, len(all_lines)),
+                                         lines_per_page)]
+
+        rendered: List[Image.Image] = []
+        for chunk in page_chunks:
+            img  = self._make_paper(W, H, paper_style, settings)
+            draw = ImageDraw.Draw(img)
+            y    = text_top
+
+            for line in chunk:
+                if y + line_h > H - margin:
+                    break
+                if line.strip():
+                    self._draw_line(draw, line, text_left, y, font, ink)
+                y += line_h
+
+            img = img.filter(ImageFilter.GaussianBlur(radius=0.25))
+            rendered.append(img)
+
+        return rendered or [self._make_paper(W, H, paper_style, settings)]
+
+    # ── Paper background ─────────────────────────────────────────────────
+
+    def _make_paper(self, W: int, H: int,
+                    style: str, settings: Dict) -> Image.Image:
+        bg   = PAPER_BG.get(style, PAPER_BG["ruled"])
+        img  = Image.new("RGB", (W, H), bg)
         draw = ImageDraw.Draw(img)
-        
-        margin = settings.get('margin', 60)
-        font_size = settings.get('font_size', 28)
-        line_spacing = settings.get('line_spacing', 1.8)
-        
-        line_height = int(font_size * line_spacing)
-        
-        if style == 'plain':
-            # Just white paper with slight texture
-            self._add_paper_texture(img, draw)
-            
-        elif style == 'ruled':
-            # Classic ruled notebook paper
-            self._add_paper_texture(img, draw)
-            line_color = LINE_COLORS['ruled']
-            
-            # Draw horizontal lines
-            y = margin + line_height
-            while y < height - margin:
-                draw.line([(margin, y), (width - margin, y)], 
-                         fill=line_color, width=1)
-                y += line_height
-            
-            # Red left margin line
-            draw.line([(margin + 30, 0), (margin + 30, height)], 
-                     fill=(255, 150, 150), width=2)
-            
-            # Top margin lines
-            draw.line([(0, margin - 10), (width, margin - 10)], 
-                     fill=(255, 150, 150), width=1)
-        
-        elif style == 'exam':
-            # Exam sheet with boxes and lines
-            self._add_paper_texture(img, draw)
-            line_color = (100, 100, 200)
-            
+        m    = settings.get("margin", 60)
+        fs   = settings.get("font_size", 28)
+        sp   = settings.get("line_spacing", 1.8)
+        lh   = int(fs * sp)
+
+        if style == "ruled":
+            # Horizontal guide lines
+            y = m + lh
+            while y < H - m:
+                draw.line([(m, y), (W - m, y)],
+                           fill=(173, 216, 230), width=1)
+                y += lh
+            # Red margin line
+            draw.line([(m + 30, 0), (m + 30, H)],
+                       fill=(255, 150, 150), width=2)
+            # Top margin
+            draw.line([(0, m - 5), (W, m - 5)],
+                       fill=(255, 160, 160), width=1)
+
+        elif style == "exam":
             # Outer border
-            border_margin = 30
-            draw.rectangle([border_margin, border_margin, 
-                           width - border_margin, height - border_margin],
-                          outline=(0, 0, 100), width=2)
-            
-            # Horizontal lines
-            y = margin + line_height
-            while y < height - margin:
-                draw.line([(margin, y), (width - margin, y)], 
-                         fill=line_color, width=1)
-                y += line_height
-            
+            bm = 30
+            draw.rectangle([bm, bm, W - bm, H - bm],
+                             outline=(0, 0, 120), width=2)
             # Header box
-            draw.rectangle([border_margin, border_margin, 
-                           width - border_margin, margin], 
-                          outline=(0, 0, 100), width=1)
-            
-            # Left margin
-            draw.line([(margin + 20, margin), (margin + 20, height - border_margin)], 
-                     fill=(100, 100, 200), width=1)
-        
-        elif style == 'graph':
-            # Graph/grid paper
-            self._add_paper_texture(img, draw, intensity=5)
-            
-            # Grid lines (minor)
-            grid_size = 20
-            for x in range(0, width, grid_size):
-                draw.line([(x, 0), (x, height)], 
-                         fill=(200, 220, 255), width=1)
-            for y in range(0, height, grid_size):
-                draw.line([(0, y), (width, y)], 
-                         fill=(200, 220, 255), width=1)
-            
-            # Major grid lines
-            major_grid = grid_size * 5
-            for x in range(0, width, major_grid):
-                draw.line([(x, 0), (x, height)], 
-                         fill=(150, 180, 240), width=1)
-            for y in range(0, height, major_grid):
-                draw.line([(0, y), (width, y)], 
-                         fill=(150, 180, 240), width=1)
-        
-        elif style in ['cream', 'yellow']:
-            self._add_paper_texture(img, draw, intensity=8)
-            
+            draw.rectangle([bm, bm, W - bm, m],
+                             outline=(0, 0, 120), width=1)
+            # Guide lines
+            y = m + lh
+            while y < H - m:
+                draw.line([(m, y), (W - m, y)],
+                           fill=(100, 100, 200), width=1)
+                y += lh
+            # Left column margin
+            draw.line([(m + 20, m), (m + 20, H - bm)],
+                       fill=(100, 100, 200), width=1)
+
+        elif style == "graph":
+            # Minor grid
+            gs = 20
+            for x in range(0, W, gs):
+                draw.line([(x, 0), (x, H)], fill=(200, 220, 255), width=1)
+            for y in range(0, H, gs):
+                draw.line([(0, y), (W, y)], fill=(200, 220, 255), width=1)
+            # Major grid
+            for x in range(0, W, gs * 5):
+                draw.line([(x, 0), (x, H)], fill=(160, 190, 240), width=1)
+            for y in range(0, H, gs * 5):
+                draw.line([(0, y), (W, y)], fill=(160, 190, 240), width=1)
+
+        # Add subtle paper texture
+        self._texture(img)
         return img
-    
-    def _add_paper_texture(self, img: Image.Image, draw: ImageDraw.Draw, intensity: int = 3):
-        """Add subtle paper texture"""
+
+    @staticmethod
+    def _texture(img: Image.Image) -> None:
+        """Apply very faint grain so the paper looks real."""
         try:
             import numpy as np
-            width, height = img.size
-            
-            # Create noise texture
-            noise = np.random.randint(0, intensity, (height, width), dtype=np.uint8)
-            noise_img = Image.fromarray(noise, mode='L').convert('RGB')
-            
-            # Very subtle blend
-            img_array = np.array(img)
-            noise_array = np.array(noise_img)
-            textured = np.clip(img_array.astype(int) - noise_array // 3, 0, 255).astype(np.uint8)
-            
-            result = Image.fromarray(textured)
-            img.paste(result)
+            arr  = np.array(img, dtype=np.int16)
+            noise = np.random.randint(-3, 4, arr.shape, dtype=np.int16)
+            arr   = np.clip(arr + noise, 0, 255).astype(np.uint8)
+            img.paste(Image.fromarray(arr))
         except ImportError:
-            pass  # Skip texture if numpy not available
-    
-    def _apply_handwriting_effect(self, img: Image.Image, draw: ImageDraw.Draw,
-                                   text: str, x: int, y: int, 
-                                   font: ImageFont.FreeTypeFont,
-                                   ink_color: Tuple[int, int, int],
-                                   jitter: float = 0.8) -> None:
-        """Draw text with handwriting-like effects"""
-        
-        # Add slight character-level variations for realism
-        chars = list(text)
-        current_x = x
-        
-        for i, char in enumerate(chars):
-            # Slight vertical jitter per character
-            char_y = y + random.uniform(-jitter, jitter)
-            char_x = current_x
-            
-            # Slight rotation effect (very subtle)
-            angle = random.uniform(-0.5, 0.5)
-            
-            # Vary ink color slightly
-            color_variation = random.randint(-8, 8)
-            char_color = tuple(max(0, min(255, c + color_variation)) for c in ink_color)
-            
-            # Draw the character
-            draw.text((char_x, char_y), char, font=font, fill=char_color)
-            
-            # Get character width for next position
+            pass
+
+    # ── Text drawing ─────────────────────────────────────────────────────
+
+    def _draw_line(self, draw: ImageDraw.Draw,
+                   text: str, x: int, y: float,
+                   font: ImageFont.FreeTypeFont,
+                   ink: Tuple[int, int, int]) -> None:
+        """
+        Draw a single text line with per-character micro-jitter to
+        simulate natural handwriting variation.
+        """
+        cx = float(x)
+        for ch in text:
+            # Vertical jitter ±1 px
+            cy = y + random.uniform(-1.0, 1.0)
+            # Colour micro-variation ±6
+            v  = random.randint(-6, 6)
+            col = tuple(max(0, min(255, c + v)) for c in ink)
+            draw.text((cx, cy), ch, font=font, fill=col)
+            cx += self._char_width(ch, font)
+
+    @staticmethod
+    def _char_width(ch: str,
+                    font: ImageFont.FreeTypeFont) -> float:
+        try:
+            bb = font.getbbox(ch)
+            return float(bb[2] - bb[0])
+        except Exception:
             try:
-                bbox = font.getbbox(char)
-                char_width = bbox[2] - bbox[0]
-            except:
-                char_width = font.getlength(char) if hasattr(font, 'getlength') else len(char) * (font.size // 2)
-            
-            # Slight spacing variation
-            spacing_variation = random.uniform(-0.5, 0.5)
-            current_x += char_width + spacing_variation
-    
-    def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont, 
-                   max_width: int) -> List[str]:
-        """Wrap text to fit within max_width"""
-        words = text.split(' ')
-        lines = []
-        current_line = []
-        current_width = 0
-        
+                return float(font.getlength(ch))
+            except Exception:
+                return float(font.size) * 0.6
+
+    # ── Text wrapping ─────────────────────────────────────────────────────
+
+    def _wrap(self, text: str,
+              font: ImageFont.FreeTypeFont,
+              max_w: int) -> List[str]:
+        words   = text.split(" ")
+        lines   = []
+        current = []
+        cur_w   = 0.0
+
         for word in words:
+            ww = self._char_width(word + " ", font)
+            if cur_w + ww <= max_w:
+                current.append(word)
+                cur_w += ww
+            else:
+                if current:
+                    lines.append(" ".join(current))
+                current = [word]
+                cur_w   = ww
+
+        if current:
+            lines.append(" ".join(current))
+
+        return lines or [""]
+
+    # ── Font loading ─────────────────────────────────────────────────────
+
+    def _load_font(self, font_name: str,
+                   size: int) -> ImageFont.FreeTypeFont:
+        from utils.font_manager import FontManager
+        fm   = FontManager(self.fonts_dir)
+        path = fm.get_font_path(font_name)
+
+        if path:
             try:
-                bbox = font.getbbox(word + ' ')
-                word_width = bbox[2] - bbox[0]
-            except:
-                try:
-                    word_width = int(font.getlength(word + ' '))
-                except:
-                    word_width = len(word) * (font.size // 2)
-            
-            if current_width + word_width <= max_width:
-                current_line.append(word)
-                current_width += word_width
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-                current_width = word_width
-        
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        return lines if lines else ['']
-    
-    def _render_page(self, text: str, settings: Dict, page_num: int = 0) -> List[Image.Image]:
-        """Render text to one or more page images"""
-        width = settings.get('page_width', 794)
-        height = settings.get('page_height', 1123)
-        font_name = settings.get('font_name', 'Kalam')
-        font_size = settings.get('font_size', 28)
-        line_spacing = settings.get('line_spacing', 1.8)
-        ink_color_name = settings.get('ink_color', 'blue')
-        margin = settings.get('margin', 60)
-        paper_style = settings.get('paper_style', 'ruled')
-        
-        ink_color = INK_COLORS.get(ink_color_name, INK_COLORS['blue'])
-        font = self._get_font(font_name, font_size)
-        
-        line_height = int(font_size * line_spacing)
-        text_width = width - (margin * 2) - 30  # Extra margin for ruled line
-        
-        # Split text into paragraphs
-        paragraphs = text.split('\n')
-        
-        # Wrap all paragraphs into lines
-        all_lines = []
-        for para in paragraphs:
-            if para.strip() == '':
-                all_lines.append('')  # Empty line for paragraph break
-            else:
-                wrapped = self._wrap_text(para, font, text_width)
-                all_lines.extend(wrapped)
-        
-        # Calculate how many lines fit per page
-        text_start_y = margin + 10
-        available_height = height - margin - text_start_y
-        lines_per_page = max(1, int(available_height / line_height))
-        
-        # Split lines into pages
-        pages = []
-        for i in range(0, max(1, len(all_lines)), lines_per_page):
-            page_lines = all_lines[i:i + lines_per_page]
-            pages.append(page_lines)
-        
-        if not pages:
-            pages = [['']]
-        
-        # Render each page
-        rendered_pages = []
-        for page_lines in pages:
-            img = self._create_paper(width, height, paper_style, settings)
-            draw = ImageDraw.Draw(img)
-            
-            y = text_start_y
-            left_x = margin + 35  # After the red margin line
-            
-            for line in page_lines:
-                if y + line_height > height - margin:
-                    break
-                
-                if line.strip():
-                    # Add slight line-level baseline variation
-                    baseline_var = random.uniform(-0.5, 0.5)
-                    
-                    self._apply_handwriting_effect(
-                        img, draw, line,
-                        left_x, y + baseline_var,
-                        font, ink_color
-                    )
-                
-                y += line_height
-            
-            # Add subtle ink smudge/bleed effect
-            img = self._add_ink_effect(img)
-            
-            rendered_pages.append(img)
-        
-        return rendered_pages
-    
-    def _add_ink_effect(self, img: Image.Image) -> Image.Image:
-        """Add subtle ink bleed/feathering effect for realism"""
+                return ImageFont.truetype(path, size)
+            except Exception as e:
+                logger.warning(f"truetype load failed ({e}); using default")
+
+        return ImageFont.load_default()
+
+    # ── PDF assembly ─────────────────────────────────────────────────────
+
+    def _images_to_pdf(self, images: List[Image.Image],
+                       dst: str) -> None:
+        """Embed rendered page images into a PDF via PyMuPDF."""
         try:
-            # Very slight blur to simulate ink spreading
-            blurred = img.filter(ImageFilter.GaussianBlur(radius=0.3))
-            # Blend slightly
-            result = Image.blend(img, blurred, alpha=0.15)
-            return result
-        except:
-            return img
-    
-    def generate_jpg(self, pages: List[str], settings: Dict, session_id: str) -> List[str]:
-        """Generate JPG images for each page"""
-        all_image_paths = []
-        global_page_num = 0
-        
-        for page_text in pages:
-            if not page_text.strip():
-                continue
-            
-            rendered_pages = self._render_page(page_text, settings, global_page_num)
-            
-            for rendered_page in rendered_pages:
-                # High quality output
-                output_path = self.output_folder / f"{session_id}_page_{global_page_num}.jpg"
-                
-                rendered_page.save(
-                    str(output_path),
-                    'JPEG',
-                    quality=95,
-                    dpi=(150, 150),
-                    optimize=True
+            import fitz
+            doc = fitz.open()
+
+            for img in images:
+                buf = io.BytesIO()
+                img.save(buf, "PNG")
+                buf.seek(0)
+
+                W, H = img.size
+                dpi  = 96
+                pw   = (W / dpi) * 72   # pixels → points
+                ph   = (H / dpi) * 72
+
+                page = doc.new_page(width=pw, height=ph)
+                page.insert_image(
+                    fitz.Rect(0, 0, pw, ph),
+                    stream=buf.read()
                 )
-                
-                all_image_paths.append(str(output_path))
-                global_page_num += 1
-        
-        return all_image_paths
-    
-    def generate_pdf(self, pages: List[str], settings: Dict, session_id: str) -> str:
-        """Generate PDF with all handwritten pages"""
-        from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import SimpleDocTemplate, Image as RLImage
-        from reportlab.lib.units import inch
-        import io
-        
-        output_path = self.output_folder / f"{session_id}.pdf"
-        
-        # First generate all page images
-        all_images = []
-        global_page_num = 0
-        
-        for page_text in pages:
-            if not page_text.strip():
-                continue
-            
-            rendered_pages = self._render_page(page_text, settings, global_page_num)
-            
-            for rendered_page in rendered_pages:
-                all_images.append(rendered_page)
-                global_page_num += 1
-        
-        if not all_images:
-            all_images = [self._render_page('', settings, 0)[0]]
-        
-        # Create PDF with images
-        try:
-            self._create_pdf_from_images(all_images, str(output_path), settings)
-        except Exception as e:
-            logger.error(f"PDF creation error: {e}")
-            # Fallback: simple PDF
-            self._create_simple_pdf(all_images, str(output_path))
-        
-        return str(output_path)
-    
-    def _create_pdf_from_images(self, images: List[Image.Image], 
-                                  output_path: str, settings: Dict):
-        """Create PDF by embedding rendered page images"""
-        import fitz
-        
-        doc = fitz.open()
-        
-        for img in images:
-            # Convert PIL image to bytes
-            img_bytes = io.BytesIO()
-            img.save(img_bytes, format='PNG', dpi=(150, 150))
-            img_bytes.seek(0)
-            
-            # Get image dimensions
-            width, height = img.size
-            
-            # Create PDF page with same dimensions (convert pixels to points)
-            # 1 inch = 72 points, assuming 96 DPI
-            dpi = 96
-            page_width_pt = (width / dpi) * 72
-            page_height_pt = (height / dpi) * 72
-            
-            page = doc.new_page(width=page_width_pt, height=page_height_pt)
-            
-            # Insert image
-            rect = fitz.Rect(0, 0, page_width_pt, page_height_pt)
-            page.insert_image(rect, stream=img_bytes.read())
-        
-        doc.save(output_path, deflate=True, garbage=4)
-        doc.close()
-    
-    def _create_simple_pdf(self, images: List[Image.Image], output_path: str):
-        """Fallback PDF creation using reportlab"""
+
+            doc.save(dst, deflate=True, garbage=4)
+            doc.close()
+
+        except Exception as exc:
+            logger.warning(f"PyMuPDF PDF assembly failed ({exc}); "
+                            "falling back to ReportLab.")
+            self._images_to_pdf_reportlab(images, dst)
+
+    def _images_to_pdf_reportlab(self, images: List[Image.Image],
+                                   dst: str) -> None:
+        """Fallback PDF creation using ReportLab."""
         from reportlab.lib.pagesizes import A4
         from reportlab.platypus import SimpleDocTemplate
-        from reportlab.lib import colors
-        import io
-        
-        doc = SimpleDocTemplate(output_path, pagesize=A4, 
-                               topMargin=0, bottomMargin=0,
-                               leftMargin=0, rightMargin=0)
-        
-        story = []
-        page_width, page_height = A4
-        
+        from reportlab.platypus import Image as RLImage
+
+        pw, ph = A4
+        doc    = SimpleDocTemplate(
+            dst, pagesize=A4,
+            topMargin=0, bottomMargin=0,
+            leftMargin=0, rightMargin=0,
+        )
+        story  = []
         for img in images:
-            img_bytes = io.BytesIO()
-            img.save(img_bytes, format='PNG')
-            img_bytes.seek(0)
-            
-            from reportlab.platypus import Image as RLImage
-            rl_img = RLImage(img_bytes, width=page_width, height=page_height)
-            story.append(rl_img)
-        
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            buf.seek(0)
+            story.append(RLImage(buf, width=pw, height=ph))
+
         doc.build(story)
 
 
+# ─── Position-Aware Generator ────────────────────────────────────────────────
 class PositionAwareGenerator(HandwritingGenerator):
-    """Generate handwriting that preserves original PDF layout positions"""
-    
-    def render_with_layout(self, layout_data: List[Dict], 
-                           settings: Dict, session_id: str) -> str:
-        """Render handwriting preserving original PDF layout"""
-        all_images = []
-        
+    """
+    Renders handwriting at the exact (x, y) positions extracted
+    from the original PDF layout, so the output matches the source
+    document's spatial arrangement.
+    """
+
+    def render_with_layout(self,
+                           layout_data: List[Dict],
+                           settings: Dict,
+                           sid: str) -> str:
+        images: List[Image.Image] = []
+
         for page_layout in layout_data:
-            orig_width = page_layout.get('width', 595)
-            orig_height = page_layout.get('height', 842)
-            
-            target_width = settings.get('page_width', 794)
-            target_height = settings.get('page_height', 1123)
-            
-            # Scale factors
-            scale_x = target_width / orig_width
-            scale_y = target_height / orig_height
-            
-            paper_style = settings.get('paper_style', 'ruled')
-            img = self._create_paper(target_width, target_height, paper_style, settings)
+            orig_w = float(page_layout.get("width",  595))
+            orig_h = float(page_layout.get("height", 842))
+            tgt_w  = int(settings.get("page_width",  794))
+            tgt_h  = int(settings.get("page_height", 1123))
+
+            sx = tgt_w / orig_w
+            sy = tgt_h / orig_h
+
+            img  = self._make_paper(tgt_w, tgt_h,
+                                    settings.get("paper_style", "ruled"),
+                                    settings)
             draw = ImageDraw.Draw(img)
-            
-            font_name = settings.get('font_name', 'Kalam')
-            ink_color = INK_COLORS.get(settings.get('ink_color', 'blue'), INK_COLORS['blue'])
-            
-            for block in page_layout.get('blocks', []):
-                if block.get('type') == 'text':
-                    for line in block.get('lines', []):
-                        line_text = line.get('text', '').strip()
-                        if not line_text:
-                            continue
-                        
-                        bbox = line.get('bbox', [0, 0, 0, 0])
-                        orig_font_size = line.get('font_size', 12)
-                        
-                        # Scale position
-                        x = bbox[0] * scale_x
-                        y = bbox[1] * scale_y
-                        
-                        # Scale font size proportionally
-                        scaled_font_size = int(orig_font_size * scale_y * 1.2)
-                        scaled_font_size = max(12, min(scaled_font_size, 
-                                                        settings.get('font_size', 28)))
-                        
-                        font = self._get_font(font_name, scaled_font_size)
-                        
-                        self._apply_handwriting_effect(
-                            img, draw, line_text, x, y, font, ink_color
-                        )
-            
-            img = self._add_ink_effect(img)
-            all_images.append(img)
-        
-        self._create_pdf_from_images(all_images, 
-                                      str(self.output_folder / f"{session_id}.pdf"),
-                                      settings)
-        
-        # Save preview image
-        if all_images:
-            preview_path = self.output_folder / f"{session_id}_page_0.jpg"
-            all_images[0].save(str(preview_path), 'JPEG', quality=95)
-        
-        return str(self.output_folder / f"{session_id}.pdf")
+
+            ink       = INK.get(settings.get("ink_color", "blue"), INK["blue"])
+            font_name = settings.get("font_name", "Kalam")
+            user_size = int(settings.get("font_size", 28))
+
+            for block in page_layout.get("blocks", []):
+                if block.get("type") != "text":
+                    continue
+                for line in block.get("lines", []):
+                    txt = line.get("text", "").strip()
+                    if not txt:
+                        continue
+                    bbox    = line.get("bbox", [0, 0, 0, 0])
+                    orig_fs = float(line.get("font_size", 12))
+
+                    # Scale font proportionally, cap at user setting
+                    scaled = int(orig_fs * sy * 1.15)
+                    scaled = max(10, min(scaled, user_size))
+
+                    font = self._load_font(font_name, scaled)
+                    x    = bbox[0] * sx
+                    y    = bbox[1] * sy
+                    self._draw_line(draw, txt, int(x), y, font, ink)
+
+            img = img.filter(ImageFilter.GaussianBlur(radius=0.25))
+            images.append(img)
+
+        dst = self.output_dir / f"{sid}.pdf"
+        self._images_to_pdf(images, str(dst))
+
+        # Save first page as preview JPG
+        if images:
+            (self.output_dir / f"{sid}_page_0.jpg").write_bytes(
+                self._img_to_bytes(images[0], "JPEG")
+            )
+
+        return str(dst)
+
+    @staticmethod
+    def _img_to_bytes(img: Image.Image, fmt: str) -> bytes:
+        buf = io.BytesIO()
+        img.save(buf, fmt, quality=95)
+        return buf.getvalue()
