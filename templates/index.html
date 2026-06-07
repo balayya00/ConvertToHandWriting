@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>✍️ PDF to Handwriting Converter</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Kalam:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">
+                <span class="logo-icon">✍️</span>
+                <div class="logo-text">
+                    <h1>PDF to Handwriting</h1>
+                    <p>Convert any text to realistic handwritten notes</p>
+                </div>
+            </div>
+            <div class="header-badges">
+                <span class="badge badge-blue"><i class="fas fa-file-pdf"></i> PDF Support</span>
+                <span class="badge badge-green"><i class="fas fa-image"></i> OCR Ready</span>
+                <span class="badge badge-purple"><i class="fas fa-pen-nib"></i> 18 Fonts</span>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-container">
+        <!-- Step Indicator -->
+        <div class="steps-indicator">
+            <div class="step active" id="step-indicator-1">
+                <div class="step-circle">1</div>
+                <span>Input</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" id="step-indicator-2">
+                <div class="step-circle">2</div>
+                <span>Customize</span>
+            </div>
+            <div class="step-line"></div>
+            <div class="step" id="step-indicator-3">
+                <div class="step-circle">3</div>
+                <span>Preview & Download</span>
+            </div>
+        </div>
+
+        <div class="workspace">
+            <!-- Left Panel: Input & Settings -->
+            <div class="left-panel">
+                
+                <!-- Step 1: Input Section -->
+                <div class="card" id="step-1">
+                    <div class="card-header">
+                        <i class="fas fa-upload"></i>
+                        <h2>Step 1: Input Your Content</h2>
+                    </div>
+                    <div class="card-body">
+                        <!-- Input Type Tabs -->
+                        <div class="input-tabs">
+                            <button class="tab-btn active" data-tab="upload-tab" onclick="switchTab('upload-tab')">
+                                <i class="fas fa-cloud-upload-alt"></i> Upload File
+                            </button>
+                            <button class="tab-btn" data-tab="text-tab" onclick="switchTab('text-tab')">
+                                <i class="fas fa-keyboard"></i> Direct Text
+                            </button>
+                        </div>
+
+                        <!-- Upload Tab -->
+                        <div id="upload-tab" class="tab-content active">
+                            <div class="upload-zone" id="upload-zone"
+                                 ondragover="handleDragOver(event)"
+                                 ondragleave="handleDragLeave(event)"
+                                 ondrop="handleDrop(event)"
+                                 onclick="document.getElementById('file-input').click()">
+                                <div class="upload-icon">
+                                    <i class="fas fa-cloud-upload-alt"></i>
+                                </div>
+                                <div class="upload-text">
+                                    <h3>Drop your file here</h3>
+                                    <p>or click to browse</p>
+                                    <div class="upload-formats">
+                                        <span class="format-badge"><i class="fas fa-file-pdf"></i> PDF</span>
+                                        <span class="format-badge"><i class="fas fa-file-image"></i> JPG</span>
+                                        <span class="format-badge"><i class="fas fa-file-image"></i> PNG</span>
+                                    </div>
+                                    <p class="upload-limit">Maximum file size: 50MB</p>
+                                </div>
+                            </div>
+                            <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png" 
+                                   style="display:none" onchange="handleFileSelect(this)">
+                            
+                            <!-- File Preview -->
+                            <div id="file-preview" class="file-preview" style="display:none">
+                                <div class="file-info">
+                                    <i class="fas fa-file" id="file-type-icon"></i>
+                                    <div class="file-details">
+                                        <span id="file-name" class="file-name"></span>
+                                        <span id="file-size" class="file-size"></span>
+                                    </div>
+                                    <button class="btn-remove" onclick="removeFile()">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <button class="btn btn-primary btn-full" id="extract-btn" 
+                                    onclick="extractText()" style="display:none">
+                                <i class="fas fa-magic"></i> Extract Text
+                            </button>
+                        </div>
+
+                        <!-- Text Tab -->
+                        <div id="text-tab" class="tab-content">
+                            <div class="textarea-container">
+                                <textarea id="direct-text" 
+                                          placeholder="Type or paste your text here...&#10;&#10;Example:&#10;Dear Student,&#10;&#10;Welcome to the handwriting converter! You can type multiple paragraphs here and they will be converted to realistic handwritten notes.&#10;&#10;The converter supports multiple pages, various handwriting styles, and different paper types."
+                                          rows="12"></textarea>
+                                <div class="textarea-footer">
+                                    <span id="char-count">0 characters</span>
+                                    <button class="btn-clear" onclick="clearText()">
+                                        <i class="fas fa-trash"></i> Clear
+                                    </button>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary btn-full" onclick="useDirectText()">
+                                <i class="fas fa-arrow-right"></i> Use This Text
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Extracted Text Preview -->
+                <div class="card" id="extracted-card" style="display:none">
+                    <div class="card-header">
+                        <i class="fas fa-align-left"></i>
+                        <h2>Extracted Text</h2>
+                        <span class="badge badge-green" id="page-count-badge"></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="extracted-text-container">
+                            <textarea id="extracted-text" rows="8" 
+                                      placeholder="Extracted text will appear here..."></textarea>
+                        </div>
+                        <p class="helper-text">
+                            <i class="fas fa-info-circle"></i>
+                            You can edit the text above before converting.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Step 2: Settings -->
+                <div class="card" id="step-2" style="display:none">
+                    <div class="card-header">
+                        <i class="fas fa-sliders-h"></i>
+                        <h2>Step 2: Customize Handwriting</h2>
+                    </div>
+                    <div class="card-body">
+                        
+                        <!-- Font Selection -->
+                        <div class="setting-group">
+                            <label class="setting-label">
+                                <i class="fas fa-font"></i> Handwriting Style
+                            </label>
+                            <div class="font-grid" id="font-grid">
+                                <div class="loading-fonts">
+                                    <i class="fas fa-spinner fa-spin"></i>
+                                    Loading fonts...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Paper Style -->
+                        <div class="setting-group">
+                            <label class="setting-label">
+                                <i class="fas fa-scroll"></i> Paper Style
+                            </label>
+                            <div class="paper-grid">
+                                <label class="paper-option active" data-value="ruled" onclick="selectPaper(this)">
+                                    <div class="paper-preview ruled-preview">
+                                        <div class="preview-line"></div>
+                                        <div class="preview-line"></div>
+                                        <div class="preview-line"></div>
+                                    </div>
+                                    <span>Ruled</span>
+                                </label>
+                                <label class="paper-option" data-value="plain" onclick="selectPaper(this)">
+                                    <div class="paper-preview plain-preview"></div>
+                                    <span>Plain</span>
+                                </label>
+                                <label class="paper-option" data-value="exam" onclick="selectPaper(this)">
+                                    <div class="paper-preview exam-preview">
+                                        <div class="preview-border"></div>
+                                        <div class="preview-line"></div>
+                                        <div class="preview-line"></div>
+                                    </div>
+                                    <span>Exam</span>
+                                </label>
+                                <label class="paper-option" data-value="graph" onclick="selectPaper(this)">
+                                    <div class="paper-preview graph-preview">
+                                        <div class="grid-lines"></div>
+                                    </div>
+                                    <span>Graph</span>
+                                </label>
+                                <label class="paper-option" data-value="cream" onclick="selectPaper(this)">
+                                    <div class="paper-preview cream-preview"></div>
+                                    <span>Cream</span>
+                                </label>
+                                <label class="paper-option" data-value="yellow" onclick="selectPaper(this)">
+                                    <div class="paper-preview yellow-preview"></div>
+                                    <span>Yellow</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Ink Color -->
+                        <div class="setting-group">
+                            <label class="setting-label">
+                                <i class="fas fa-tint"></i> Ink Color
+                            </label>
+                            <div class="color-options">
+                                <label class="color-option active" data-value="blue" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #0a0ab4;"></div>
+                                    <span>Blue</span>
+                                </label>
+                                <label class="color-option" data-value="dark_blue" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #00008b;"></div>
+                                    <span>Dark Blue</span>
+                                </label>
+                                <label class="color-option" data-value="black" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #141414;"></div>
+                                    <span>Black</span>
+                                </label>
+                                <label class="color-option" data-value="pencil" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #505050;"></div>
+                                    <span>Pencil</span>
+                                </label>
+                                <label class="color-option" data-value="red" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #b40000;"></div>
+                                    <span>Red</span>
+                                </label>
+                                <label class="color-option" data-value="green" onclick="selectColor(this)">
+                                    <div class="color-swatch" style="background: #008000;"></div>
+                                    <span>Green</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Sliders -->
+                        <div class="sliders-grid">
+                            <div class="slider-group">
+                                <label class="setting-label">
+                                    <i class="fas fa-text-height"></i> Font Size
+                                    <span class="slider-value" id="font-size-val">28</span>
+                                </label>
+                                <input type="range" id="font-size" min="16" max="52" value="28" step="2"
+                                       oninput="updateSlider('font-size', 'font-size-val', 'px')">
+                                <div class="slider-labels">
+                                    <span>Small</span>
+                                    <span>Large</span>
+                                </div>
+                            </div>
+                            
+                            <div class="slider-group">
+                                <label class="setting-label">
+                                    <i class="fas fa-text-height"></i> Line Spacing
+                                    <span class="slider-value" id="line-spacing-val">1.8</span>
+                                </label>
+                                <input type="range" id="line-spacing" min="1.2" max="3.0" value="1.8" step="0.1"
+                                       oninput="updateSlider('line-spacing', 'line-spacing-val', 'x')">
+                                <div class="slider-labels">
+                                    <span>Tight</span>
+                                    <span>Wide</span>
+                                </div>
+                            </div>
+                            
+                            <div class="slider-group">
+                                <label class="setting-label">
+                                    <i class="fas fa-arrows-alt-h"></i> Page Margin
+                                    <span class="slider-value" id="margin-val">60</span>
+                                </label>
+                                <input type="range" id="margin" min="30" max="150" value="60" step="10"
+                                       oninput="updateSlider('margin', 'margin-val', 'px')">
+                                <div class="slider-labels">
+                                    <span>Narrow</span>
+                                    <span>Wide</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Output Format -->
+                        <div class="setting-group">
+                            <label class="setting-label">
+                                <i class="fas fa-download"></i> Output Format
+                            </label>
+                            <div class="format-options">
+                                <label class="format-option" data-value="pdf" onclick="selectFormat(this)">
+                                    <input type="radio" name="output-format" value="pdf" checked>
+                                    <i class="fas fa-file-pdf"></i>
+                                    <span>PDF</span>
+                                    <small>All pages in one file</small>
+                                </label>
+                                <label class="format-option" data-value="jpg" onclick="selectFormat(this)">
+                                    <input type="radio" name="output-format" value="jpg">
+                                    <i class="fas fa-file-image"></i>
+                                    <span>JPG Images</span>
+                                    <small>One image per page</small>
+                                </label>
+                                <label class="format-option" data-value="both" onclick="selectFormat(this)">
+                                    <input type="radio" name="output-format" value="both">
+                                    <i class="fas fa-layer-group"></i>
+                                    <span>Both</span>
+                                    <small>PDF + JPG images</small>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Preserve Layout Option -->
+                        <div class="setting-group" id="layout-option" style="display:none">
+                            <label class="toggle-setting">
+                                <input type="checkbox" id="preserve-layout" checked>
+                                <div class="toggle-slider"></div>
+                                <span>
+                                    <i class="fas fa-magic"></i>
+                                    Preserve Original PDF Layout
+                                    <small>Maintains text positions from original PDF</small>
+                                </span>
+                            </label>
+                        </div>
+
+                        <!-- Convert Button -->
+                        <button class="btn btn-convert btn-full" id="convert-btn" onclick="convertToHandwriting()">
+                            <i class="fas fa-pen-nib"></i>
+                            Convert to Handwriting
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Preview -->
+            <div class="right-panel">
+                <div class="card preview-card" id="preview-card">
+                    <div class="card-header">
+                        <i class="fas fa-eye"></i>
+                        <h2>Preview</h2>
+                        <div class="preview-controls" id="preview-controls" style="display:none">
+                            <button class="btn-icon" onclick="prevPage()" id="prev-page-btn" disabled>
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <span id="page-indicator">Page 1 / 1</span>
+                            <button class="btn-icon" onclick="nextPage()" id="next-page-btn">
+                                <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Empty State -->
+                        <div class="empty-preview" id="empty-preview">
+                            <div class="empty-icon">
+                                <i class="fas fa-file-alt"></i>
+                            </div>
+                            <h3>Your handwritten preview will appear here</h3>
+                            <p>Upload a file or enter text, customize your settings, then click Convert</p>
+                            <div class="preview-features">
+                                <div class="feature">
+                                    <i class="fas fa-pen-nib"></i>
+                                    <span>18 Handwriting Styles</span>
+                                </div>
+                                <div class="feature">
+                                    <i class="fas fa-scroll"></i>
+                                    <span>6 Paper Types</span>
+                                </div>
+                                <div class="feature">
+                                    <i class="fas fa-tint"></i>
+                                    <span>6 Ink Colors</span>
+                                </div>
+                                <div class="feature">
+                                    <i class="fas fa-file-pdf"></i>
+                                    <span>PDF & JPG Export</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Loading State -->
+                        <div class="preview-loading" id="preview-loading" style="display:none">
+                            <div class="loading-animation">
+                                <div class="pen-animation">
+                                    <i class="fas fa-pen-nib"></i>
+                                </div>
+                                <h3 id="loading-text">Generating handwriting...</h3>
+                                <div class="progress-bar">
+                                    <div class="progress-fill" id="progress-fill"></div>
+                                </div>
+                                <p id="loading-detail">Processing your text...</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Preview Image -->
+                        <div id="preview-container" style="display:none">
+                            <div class="page-preview-wrapper">
+                                <img id="preview-image" src="" alt="Handwritten preview" 
+                                     class="preview-image">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Download Panel -->
+                <div class="card download-card" id="download-card" style="display:none">
+                    <div class="card-header">
+                        <i class="fas fa-download"></i>
+                        <h2>Step 3: Download</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="download-info">
+                            <div class="info-stat">
+                                <span class="stat-num" id="dl-pages">0</span>
+                                <span class="stat-label">Pages</span>
+                            </div>
+                            <div class="info-stat">
+                                <span class="stat-num" id="dl-format">PDF</span>
+                                <span class="stat-label">Format</span>
+                            </div>
+                        </div>
+                        
+                        <div class="download-buttons" id="download-buttons">
+                            <!-- Buttons added dynamically -->
+                        </div>
+                        
+                        <button class="btn btn-secondary btn-full" onclick="resetAll()">
+                            <i class="fas fa-redo"></i> Start Over / Convert Another
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Toast Notification -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <!-- Loading Overlay -->
+    <div class="overlay" id="overlay" style="display:none">
+        <div class="overlay-content">
+            <div class="spinner"></div>
+            <p id="overlay-text">Processing...</p>
+        </div>
+    </div>
+
+    <footer class="footer">
+        <p>✍️ PDF to Handwriting Converter &bull; Built with Python & Flask &bull; 
+           <a href="#" onclick="showInfo()">About</a>
+        </p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
