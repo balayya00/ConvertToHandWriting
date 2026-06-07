@@ -1,61 +1,103 @@
+"""
+PDF to Handwriting Converter
+Main Flask Application
+"""
 import os
 import sys
 import uuid
-import json
 import logging
 import traceback
+import io
+import zipfile
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, render_template
+from flask import (Flask, request, jsonify, send_file, 
+                   render_template, make_response)
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 import tempfile
-import shutil
 
-# Configure logging
+# ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
+# ─── App Setup ──────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app)
 
-# Configuration
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config.update(
+    MAX_CONTENT_LENGTH=50 * 1024 * 1024,  # 50MB
+    SECRET_KEY=os.environ.get('SECRET_KEY', os.urandom(32).hex()),
+    JSON_SORT_KEYS=False,
+)
 
-UPLOAD_FOLDER = Path(tempfile.gettempdir()) / 'pdf_handwriting_uploads'
-OUTPUT_FOLDER = Path(tempfile.gettempdir()) / 'pdf_handwriting_outputs'
-FONTS_FOLDER = Path(__file__).parent / 'static' / 'fonts'
+# ─── Paths ──────────────────────────────────────────────────────────────────
+BASE_DIR    = Path(__file__).parent
+UPLOAD_DIR  = Path(tempfile.gettempdir()) / 'phc_uploads'
+OUTPUT_DIR  = Path(tempfile.gettempdir()) / 'phc_outputs'
+FONTS_DIR   = BASE_DIR / 'static' / 'fonts'
 
-UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
-OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-FONTS_FOLDER.mkdir(parents=True, exist_ok=True)
+for d in (UPLOAD_DIR, OUTPUT_DIR, FONTS_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'pdf', 'jpg', 'jpeg', 'png'}
+ALLOWED_EXT = {'pdf', 'jpg', 'jpeg', 'png'}
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# ─── Helpers ────────────────────────────────────────────────────────────────
+def allowed_file(filename: str) -> bool:
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXT
+
+def make_session_id() -> str:
+    return str(uuid.uuid4()).replace('-', '')[:16]
+
+# ─── Routes ─────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-@app.route('/api/fonts', methods=['GET'])
-def get_fonts():
-    """Return available handwriting fonts"""
-    from utils.font_manager import FontManager
-    fm = FontManager(FONTS_FOLDER)
-    fonts = fm.get_available_fonts()
-    return jsonify({'fonts': fonts, 'status': 'success'})
+
+@app.route('/health')
+def health():
+    """Health check for Render"""
+    return jsonify({'status': 'ok', 'version': '2.0'}), 200
+
+
+@app.route('/api/fonts')
+def api_fonts():
+    """List available handwriting fonts"""
+    try:
+        from utils.font_manager import FontManager
+        fm = FontManager(FONTS_DIR)
+        fonts = fm.get_available_fonts()
+        return jsonify({'status': 'success', 'fonts': fonts})
+    except Exception as e:
+        logger.error(f"Font list error: {e}")
+        return jsonify({'status': 'error', 'fonts': [], 'error': str(e)}), 500
+
+
+@app.route('/api/fonts/download', methods=['POST'])
+def api_download_fonts():
+    """Trigger background font download"""
+    try:
+        from utils.font_manager import FontManager
+        fm = FontManager(FONTS_DIR)
+        count = fm.ensure_fonts_downloaded()
+        return jsonify({'status': 'success', 'downloaded': count})
+    except Exception as e:
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
 
 @app.route('/api/extract', methods=['POST'])
-def extract_text():
-    """Extract text from uploaded file or use direct input"""
+def api_extract():
+    """Extract text from file upload or direct text"""
     try:
-        input_type = request.form.get('input_type', 'text')
-        
+        input_type = request.form.get('input_type', 'file')
+
+        # ── Direct text ──────────────────────────────────────────────────
         if input_type == 'text':
             text = request.form.get('text', '').strip()
             if not text:
@@ -64,217 +106,235 @@ def extract_text():
                 'status': 'success',
                 'text': text,
                 'pages': [text],
-                'page_count': 1
+                'page_count': 1,
+                'layout_data': None,
             })
-        
+
+        # ── File upload ──────────────────────────────────────────────────
         if 'file' not in request.files:
-            return jsonify({'error': 'No file uploaded'}), 400
-        
+            return jsonify({'error': 'No file in request'}), 400
+
         file = request.files['file']
-        if not file or file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
-        
+        if not file or not file.filename:
+            return jsonify({'error': 'Empty file'}), 400
+
         if not allowed_file(file.filename):
-            return jsonify({'error': 'Unsupported file type. Please upload PDF, JPG, or PNG'}), 400
-        
-        # Save uploaded file
-        filename = secure_filename(file.filename)
-        unique_id = str(uuid.uuid4())
-        file_path = UPLOAD_FOLDER / f"{unique_id}_{filename}"
-        file.save(str(file_path))
-        
-        ext = filename.rsplit('.', 1)[1].lower()
-        
-        if ext == 'pdf':
-            from utils.pdf_extractor import PDFExtractor
-            extractor = PDFExtractor()
-            result = extractor.extract(str(file_path))
-        elif ext in ['jpg', 'jpeg', 'png']:
-            from utils.ocr_extractor import OCRExtractor
-            extractor = OCRExtractor()
-            result = extractor.extract(str(file_path))
-        else:
-            return jsonify({'error': 'Unsupported file type'}), 400
-        
-        # Cleanup upload
+            return jsonify({
+                'error': 'Unsupported file type. '
+                         'Upload PDF, JPG, or PNG only.'
+            }), 400
+
+        # Save temporarily
+        ext      = file.filename.rsplit('.', 1)[1].lower()
+        sid      = make_session_id()
+        tmp_path = UPLOAD_DIR / f"{sid}.{ext}"
+        file.save(str(tmp_path))
+
         try:
-            file_path.unlink()
-        except:
-            pass
-        
+            if ext == 'pdf':
+                from utils.pdf_extractor import PDFExtractor
+                result = PDFExtractor().extract(str(tmp_path))
+            else:
+                from utils.ocr_extractor import OCRExtractor
+                result = OCRExtractor().extract(str(tmp_path))
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
         return jsonify({
             'status': 'success',
-            'text': result.get('full_text', ''),
-            'pages': result.get('pages', []),
-            'page_count': result.get('page_count', 1),
-            'layout_data': result.get('layout_data', None)
+            'text':        result.get('full_text', ''),
+            'pages':       result.get('pages', []),
+            'page_count':  result.get('page_count', 1),
+            'layout_data': result.get('layout_data'),
         })
-        
+
     except Exception as e:
-        logger.error(f"Extraction error: {traceback.format_exc()}")
+        logger.error(f"Extract error:\n{traceback.format_exc()}")
         return jsonify({'error': f'Extraction failed: {str(e)}'}), 500
 
+
 @app.route('/api/convert', methods=['POST'])
-def convert_to_handwriting():
-    """Convert text to handwritten output"""
+def api_convert():
+    """Convert text/pages to handwritten output"""
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
-        text = data.get('text', '').strip()
-        pages = data.get('pages', [text] if text else [])
-        
-        if not pages or not any(p.strip() for p in pages):
-            return jsonify({'error': 'No text to convert'}), 400
-        
+            return jsonify({'error': 'No JSON body'}), 400
+
+        # Resolve pages list
+        raw_pages = data.get('pages', [])
+        raw_text  = data.get('text', '').strip()
+        if not raw_pages:
+            raw_pages = [raw_text] if raw_text else []
+
+        pages = [p.strip() for p in raw_pages if str(p).strip()]
+        if not pages:
+            return jsonify({'error': 'No text content to convert'}), 400
+
         settings = {
-            'font_name': data.get('font_name', 'HomemadeApple'),
-            'font_size': int(data.get('font_size', 28)),
-            'line_spacing': float(data.get('line_spacing', 1.8)),
-            'ink_color': data.get('ink_color', 'blue'),
-            'margin': int(data.get('margin', 60)),
-            'paper_style': data.get('paper_style', 'ruled'),
+            'font_name':    data.get('font_name', 'Kalam'),
+            'font_size':    max(12, min(72, int(data.get('font_size', 28)))),
+            'line_spacing': max(1.0, min(4.0, float(data.get('line_spacing', 1.8)))),
+            'ink_color':    data.get('ink_color', 'blue'),
+            'margin':       max(20, min(200, int(data.get('margin', 60)))),
+            'paper_style':  data.get('paper_style', 'ruled'),
             'output_format': data.get('output_format', 'pdf'),
-            'page_width': int(data.get('page_width', 794)),
-            'page_height': int(data.get('page_height', 1123)),
+            'page_width':   int(data.get('page_width', 794)),
+            'page_height':  int(data.get('page_height', 1123)),
+            'preserve_layout': bool(data.get('preserve_layout', False)),
+            'layout_data':  data.get('layout_data'),
         }
-        
-        from utils.handwriting_generator import HandwritingGenerator
+
+        # Ensure fonts exist (download if missing)
         from utils.font_manager import FontManager
-        
-        fm = FontManager(FONTS_FOLDER)
-        fm.ensure_fonts_downloaded()
-        
-        generator = HandwritingGenerator(FONTS_FOLDER, OUTPUT_FOLDER)
-        
-        output_format = settings['output_format']
-        unique_id = str(uuid.uuid4())
-        
-        if output_format in ['pdf', 'both']:
-            pdf_path = generator.generate_pdf(pages, settings, unique_id)
-        
-        if output_format in ['jpg', 'both']:
-            jpg_paths = generator.generate_jpg(pages, settings, unique_id)
-        
-        result = {
-            'status': 'success',
-            'session_id': unique_id,
-            'output_format': output_format,
-            'page_count': len(pages)
-        }
-        
-        if output_format in ['pdf', 'both']:
-            result['pdf_url'] = f'/api/download/{unique_id}/pdf'
-        if output_format in ['jpg', 'both']:
-            result['jpg_urls'] = [f'/api/download/{unique_id}/jpg/{i}' for i in range(len(pages))]
-            result['preview_url'] = f'/api/download/{unique_id}/jpg/0'
-        elif output_format == 'pdf':
-            result['preview_url'] = f'/api/preview/{unique_id}'
-        
+        FontManager(FONTS_DIR).ensure_fonts_downloaded()
+
+        from utils.handwriting_generator import HandwritingGenerator
+        gen = HandwritingGenerator(FONTS_DIR, OUTPUT_DIR)
+
+        sid    = make_session_id()
+        fmt    = settings['output_format']
+        result = {'status': 'success', 'session_id': sid,
+                  'output_format': fmt}
+
+        # Use layout-aware generator for PDFs when requested
+        if (settings['preserve_layout'] and
+                settings['layout_data'] and
+                fmt in ('pdf', 'both')):
+            from utils.handwriting_generator import PositionAwareGenerator
+            pag = PositionAwareGenerator(FONTS_DIR, OUTPUT_DIR)
+            pag.render_with_layout(settings['layout_data'], settings, sid)
+        else:
+            if fmt in ('pdf', 'both'):
+                gen.generate_pdf(pages, settings, sid)
+            if fmt in ('jpg', 'both'):
+                gen.generate_jpg(pages, settings, sid)
+
+        page_count = len(pages)
+        result['page_count'] = page_count
+
+        if fmt in ('pdf', 'both'):
+            result['pdf_url']     = f'/api/download/{sid}/pdf'
+            result['preview_url'] = f'/api/preview/{sid}'
+
+        if fmt in ('jpg', 'both'):
+            jpg_urls = [f'/api/download/{sid}/jpg/{i}'
+                        for i in range(page_count)]
+            result['jpg_urls']    = jpg_urls
+            result['preview_url'] = jpg_urls[0] if jpg_urls else ''
+
         return jsonify(result)
-        
+
     except Exception as e:
-        logger.error(f"Conversion error: {traceback.format_exc()}")
+        logger.error(f"Convert error:\n{traceback.format_exc()}")
         return jsonify({'error': f'Conversion failed: {str(e)}'}), 500
 
-@app.route('/api/preview/<session_id>', methods=['GET'])
-def preview_page(session_id):
-    """Generate preview image from PDF first page"""
+
+@app.route('/api/preview/<sid>')
+def api_preview(sid: str):
+    """Return first-page PNG preview of a generated PDF"""
+    # Sanitize
+    sid = ''.join(c for c in sid if c.isalnum())
+    pdf_path = OUTPUT_DIR / f"{sid}.pdf"
+    png_path = OUTPUT_DIR / f"{sid}_preview.png"
+
+    if not pdf_path.exists():
+        return jsonify({'error': 'Session not found'}), 404
+
     try:
-        pdf_path = OUTPUT_FOLDER / f"{session_id}.pdf"
-        if not pdf_path.exists():
-            return jsonify({'error': 'Session not found'}), 404
-        
-        import fitz
-        doc = fitz.open(str(pdf_path))
-        page = doc[0]
-        mat = fitz.Matrix(1.5, 1.5)
-        pix = page.get_pixmap(matrix=mat)
-        img_path = OUTPUT_FOLDER / f"{session_id}_preview.png"
-        pix.save(str(img_path))
-        doc.close()
-        
-        return send_file(str(img_path), mimetype='image/png')
+        if not png_path.exists():
+            import fitz
+            doc  = fitz.open(str(pdf_path))
+            page = doc[0]
+            mat  = fitz.Matrix(1.5, 1.5)
+            pix  = page.get_pixmap(matrix=mat)
+            pix.save(str(png_path))
+            doc.close()
+
+        return send_file(str(png_path), mimetype='image/png',
+                         max_age=300)
     except Exception as e:
         logger.error(f"Preview error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/download/<session_id>/pdf', methods=['GET'])
-def download_pdf(session_id):
-    """Download generated PDF"""
-    pdf_path = OUTPUT_FOLDER / f"{session_id}.pdf"
+
+@app.route('/api/download/<sid>/pdf')
+def download_pdf(sid: str):
+    sid      = ''.join(c for c in sid if c.isalnum())
+    pdf_path = OUTPUT_DIR / f"{sid}.pdf"
     if not pdf_path.exists():
-        return jsonify({'error': 'File not found. Please convert again.'}), 404
-    
-    return send_file(
-        str(pdf_path),
-        as_attachment=True,
-        download_name='handwritten_notes.pdf',
-        mimetype='application/pdf'
-    )
+        return jsonify({'error': 'File not found – please convert again'}), 404
+    return send_file(str(pdf_path), as_attachment=True,
+                     download_name='handwritten_notes.pdf',
+                     mimetype='application/pdf')
 
-@app.route('/api/download/<session_id>/jpg/<int:page_num>', methods=['GET'])
-def download_jpg(session_id, page_num):
-    """Download generated JPG for specific page"""
-    jpg_path = OUTPUT_FOLDER / f"{session_id}_page_{page_num}.jpg"
-    if not jpg_path.exists():
-        # Try PNG
-        jpg_path = OUTPUT_FOLDER / f"{session_id}_page_{page_num}.png"
-    if not jpg_path.exists():
-        return jsonify({'error': 'File not found. Please convert again.'}), 404
-    
-    return send_file(
-        str(jpg_path),
-        as_attachment=True,
-        download_name=f'handwritten_page_{page_num + 1}.jpg',
-        mimetype='image/jpeg'
-    )
 
-@app.route('/api/download/<session_id>/all', methods=['GET'])
-def download_all_jpg(session_id):
-    """Download all JPG pages as ZIP"""
-    import zipfile
-    import io
-    
-    jpg_files = list(OUTPUT_FOLDER.glob(f"{session_id}_page_*.jpg"))
-    png_files = list(OUTPUT_FOLDER.glob(f"{session_id}_page_*.png"))
-    all_files = jpg_files + png_files
-    
-    if not all_files:
-        return jsonify({'error': 'No files found'}), 404
-    
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for i, f in enumerate(sorted(all_files)):
+@app.route('/api/download/<sid>/jpg/<int:page>')
+def download_jpg(sid: str, page: int):
+    sid = ''.join(c for c in sid if c.isalnum())
+    for ext in ('jpg', 'jpeg', 'png'):
+        p = OUTPUT_DIR / f"{sid}_page_{page}.{ext}"
+        if p.exists():
+            return send_file(str(p), as_attachment=True,
+                             download_name=f'handwritten_page_{page+1}.jpg',
+                             mimetype='image/jpeg')
+    return jsonify({'error': 'Page not found'}), 404
+
+
+@app.route('/api/download/<sid>/all')
+def download_all(sid: str):
+    """ZIP of all JPG pages"""
+    sid   = ''.join(c for c in sid if c.isalnum())
+    files = sorted(OUTPUT_DIR.glob(f"{sid}_page_*.jpg")) + \
+            sorted(OUTPUT_DIR.glob(f"{sid}_page_*.png"))
+
+    if not files:
+        return jsonify({'error': 'No pages found'}), 404
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for i, f in enumerate(files):
             zf.write(str(f), f'handwritten_page_{i+1}.jpg')
-    
-    zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        as_attachment=True,
-        download_name='handwritten_notes.zip',
-        mimetype='application/zip'
-    )
+    buf.seek(0)
+
+    return send_file(buf, as_attachment=True,
+                     download_name='handwritten_notes.zip',
+                     mimetype='application/zip')
+
+
+# ─── Error Handlers ─────────────────────────────────────────────────────────
 
 @app.errorhandler(413)
-def too_large(e):
-    return jsonify({'error': 'File too large. Maximum size is 50MB'}), 413
+def too_large(_):
+    return jsonify({'error': 'File too large (max 50 MB)'}), 413
+
 
 @app.errorhandler(404)
-def not_found(e):
+def not_found(_):
+    if request.path.startswith('/api/'):
+        return jsonify({'error': 'Not found'}), 404
     return render_template('index.html')
 
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({'error': 'Internal server error'}), 500
+
+
+# ─── Startup ────────────────────────────────────────────────────────────────
+
 if __name__ == '__main__':
-    # Initialize fonts on startup
+    # Pre-download fonts
     try:
         from utils.font_manager import FontManager
-        fm = FontManager(FONTS_FOLDER)
+        fm = FontManager(FONTS_DIR)
         fm.ensure_fonts_downloaded()
-        logger.info("Fonts initialized successfully")
     except Exception as e:
-        logger.warning(f"Font initialization warning: {e}")
-    
-    port = int(os.environ.get('PORT', 5000))
-    debug = os.environ.get('FLASK_ENV', 'production') == 'development'
+        logger.warning(f"Startup font warning (non-fatal): {e}")
+
+    port  = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_ENV') == 'development'
     app.run(host='0.0.0.0', port=port, debug=debug)
