@@ -4,63 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>✍️ PDF to Handwriting Converter</title>
-
-  <!--
-    Load ALL 35 Google Fonts directly so the browser renders
-    live previews in the font cards — no download needed for preview.
-  -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Homemade+Apple&family=Dancing+Script&family=Great+Vibes&family=Allura&family=Sacramento&family=Parisienne&family=Pinyon+Script&family=Tangerine:wght@400;700&family=Alex+Brush&family=Yellowtail&family=Satisfy&family=Kalam&family=Caveat&family=Patrick+Hand&family=Indie+Flower&family=Shadows+Into+Light&family=Nothing+You+Could+Do&family=Covered+By+Your+Grace&family=Gloria+Hallelujah&family=Architects+Daughter&family=Permanent+Marker&family=Rock+Salt&family=Pacifico&family=Damion&family=Marck+Script&family=Engagement&family=Euphoria+Script&family=Italianno&family=Rouge+Script&family=Clicker+Script&family=Amatic+SC&family=Inter:wght@400;500;600;700&display=swap"
-        rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous">
+  <link rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+    crossorigin="anonymous">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-
-  <!-- Inline critical font-face map so JS can apply them to cards -->
-  <style>
-    /* Map each font key → CSS font-family name */
-    .ff-HomemadeApple        { font-family: 'Homemade Apple', cursive; }
-    .ff-DancingScript        { font-family: 'Dancing Script', cursive; }
-    .ff-GreatVibes           { font-family: 'Great Vibes', cursive; }
-    .ff-Allura               { font-family: 'Allura', cursive; }
-    .ff-Sacramento           { font-family: 'Sacramento', cursive; }
-    .ff-Parisienne           { font-family: 'Parisienne', cursive; }
-    .ff-Pinyon_Script        { font-family: 'Pinyon Script', cursive; }
-    .ff-Tangerine            { font-family: 'Tangerine', cursive; }
-    .ff-AlexBrush            { font-family: 'Alex Brush', cursive; }
-    .ff-Yellowtail           { font-family: 'Yellowtail', cursive; }
-    .ff-Satisfy              { font-family: 'Satisfy', cursive; }
-    .ff-Kalam                { font-family: 'Kalam', cursive; }
-    .ff-Caveat               { font-family: 'Caveat', cursive; }
-    .ff-Patrick_Hand         { font-family: 'Patrick Hand', cursive; }
-    .ff-Indie_Flower         { font-family: 'Indie Flower', cursive; }
-    .ff-Shadows_Into_Light   { font-family: 'Shadows Into Light', cursive; }
-    .ff-Nothing_You_Could_Do { font-family: 'Nothing You Could Do', cursive; }
-    .ff-Covered_By_Your_Grace{ font-family: 'Covered By Your Grace', cursive; }
-    .ff-GloriaHallelujah     { font-family: 'Gloria Hallelujah', cursive; }
-    .ff-Architects_Daughter  { font-family: 'Architects Daughter', cursive; }
-    .ff-Permanent_Marker     { font-family: 'Permanent Marker', cursive; }
-    .ff-Rock_Salt            { font-family: 'Rock Salt', cursive; }
-    .ff-Pacifico             { font-family: 'Pacifico', cursive; }
-    .ff-Damion               { font-family: 'Damion', cursive; }
-    .ff-Marck_Script         { font-family: 'Marck Script', cursive; }
-    .ff-Engagement           { font-family: 'Engagement', cursive; }
-    .ff-Euphoria_Script      { font-family: 'Euphoria Script', cursive; }
-    .ff-Italianno            { font-family: 'Italianno', cursive; }
-    .ff-Norican              { font-family: 'Norican', cursive; }
-    .ff-Rouge_Script         { font-family: 'Rouge Script', cursive; }
-    .ff-Clicker_Script       { font-family: 'Clicker Script', cursive; }
-    .ff-Kurale               { font-family: 'Kurale', serif; }
-    .ff-Amatic_SC            { font-family: 'Amatic SC', cursive; }
-    .ff-Dr_Sugiyama          { font-family: 'Dr Sugiyama', cursive; }
-    .ff-Qwitcher_Grypen      { font-family: 'Qwitcher Grypen', cursive; }
-  </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════
-     HEADER
-════════════════════════════════════════════════════════════ -->
 <header class="header">
   <div class="header-content">
     <div class="logo">
@@ -72,18 +24,13 @@
     </div>
     <div class="header-badges">
       <span class="badge badge-blue"><i class="fas fa-file-pdf"></i> PDF + OCR</span>
-      <span class="badge badge-green"><i class="fas fa-pen-nib"></i> 35 Fonts</span>
+      <span class="badge badge-green"><i class="fas fa-pen-nib"></i> 32 Fonts</span>
       <span class="badge badge-purple"><i class="fas fa-scroll"></i> 6 Papers</span>
     </div>
   </div>
 </header>
 
-<!-- ═══════════════════════════════════════════════════════════
-     MAIN
-════════════════════════════════════════════════════════════ -->
 <main class="main-container">
-
-  <!-- Step indicator -->
   <div class="steps-indicator">
     <div class="step active" id="step-indicator-1">
       <div class="step-circle">1</div><span>Input</span>
@@ -99,11 +46,9 @@
   </div>
 
   <div class="workspace">
-
-    <!-- ═══ LEFT PANEL ════════════════════════════════════════ -->
+    <!-- LEFT PANEL -->
     <div class="left-panel">
 
-      <!-- Step 1 -->
       <div class="card" id="step-1">
         <div class="card-header">
           <i class="fas fa-upload"></i>
@@ -119,7 +64,6 @@
             </button>
           </div>
 
-          <!-- Upload -->
           <div id="upload-tab" class="tab-content active">
             <div class="upload-zone" id="upload-zone"
                  ondragover="onDragOver(event)" ondragleave="onDragLeave()"
@@ -138,7 +82,6 @@
             </div>
             <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png"
                    style="display:none" onchange="onFileChange(this)">
-
             <div id="file-preview" class="file-preview" style="display:none">
               <div class="file-info">
                 <i id="file-type-icon" class="fas fa-file"></i>
@@ -155,10 +98,9 @@
             </button>
           </div>
 
-          <!-- Direct text -->
           <div id="text-tab" class="tab-content">
             <textarea id="direct-text" rows="10"
-              placeholder="Type or paste your text here…&#10;&#10;Multiple paragraphs supported.&#10;Page breaks happen automatically."></textarea>
+              placeholder="Type or paste your text here…&#10;&#10;Multiple paragraphs are supported.&#10;Automatic page breaks happen when text overflows."></textarea>
             <div class="textarea-footer">
               <span id="char-count">0 characters</span>
               <button class="btn-clear" onclick="clearText()">
@@ -173,7 +115,6 @@
         </div>
       </div>
 
-      <!-- Extracted text -->
       <div class="card" id="extracted-card" style="display:none">
         <div class="card-header">
           <i class="fas fa-align-left"></i>
@@ -182,14 +123,13 @@
         </div>
         <div class="card-body">
           <textarea id="extracted-text" rows="7"
-                    placeholder="Extracted text will appear here…"></textarea>
+                    placeholder="Extracted text appears here…"></textarea>
           <p class="helper-text">
-            <i class="fas fa-info-circle"></i> Edit before converting if needed.
+            <i class="fas fa-info-circle"></i> You can edit this before converting.
           </p>
         </div>
       </div>
 
-      <!-- Step 2: Settings -->
       <div class="card" id="step-2" style="display:none">
         <div class="card-header">
           <i class="fas fa-sliders-h"></i>
@@ -197,17 +137,15 @@
         </div>
         <div class="card-body">
 
-          <!-- ── Font picker ─────────────────────────────── -->
+          <!-- Font -->
           <div class="setting-group">
             <label class="setting-label">
               <i class="fas fa-font"></i> Handwriting Style
               <span class="selected-font-name" id="selected-font-name">Kalam</span>
             </label>
-            <!-- Search -->
             <input type="text" id="font-search" class="font-search"
                    placeholder="🔍 Search fonts…" oninput="filterFonts(this.value)">
-            <!-- Category tabs -->
-            <div class="font-cats" id="font-cats">
+            <div class="font-cats">
               <button class="cat-btn active" onclick="filterCat(this,'all')">All</button>
               <button class="cat-btn" onclick="filterCat(this,'Calligraphy')">Calligraphy</button>
               <button class="cat-btn" onclick="filterCat(this,'Cursive')">Cursive</button>
@@ -216,13 +154,11 @@
               <button class="cat-btn" onclick="filterCat(this,'Print')">Print</button>
             </div>
             <div class="font-grid" id="font-grid">
-              <div class="loading-fonts">
-                <i class="fas fa-spinner fa-spin"></i> Loading fonts…
-              </div>
+              <div class="loading-fonts"><i class="fas fa-spinner fa-spin"></i> Loading…</div>
             </div>
           </div>
 
-          <!-- ── Paper style ────────────────────────────── -->
+          <!-- Paper -->
           <div class="setting-group">
             <label class="setting-label"><i class="fas fa-scroll"></i> Paper Style</label>
             <div class="paper-grid">
@@ -251,7 +187,7 @@
             </div>
           </div>
 
-          <!-- ── Ink color ───────────────────────────────── -->
+          <!-- Ink -->
           <div class="setting-group">
             <label class="setting-label"><i class="fas fa-tint"></i> Ink Color</label>
             <div class="color-options">
@@ -276,7 +212,7 @@
             </div>
           </div>
 
-          <!-- ── Sliders ────────────────────────────────── -->
+          <!-- Sliders -->
           <div class="sliders-grid">
             <div class="slider-group">
               <label class="setting-label">
@@ -307,7 +243,7 @@
             </div>
           </div>
 
-          <!-- ── Output format ──────────────────────────── -->
+          <!-- Format -->
           <div class="setting-group">
             <label class="setting-label"><i class="fas fa-download"></i> Output Format</label>
             <div class="format-options">
@@ -326,7 +262,6 @@
             </div>
           </div>
 
-          <!-- ── Layout preserve (PDF) ──────────────────── -->
           <div class="setting-group" id="layout-opt" style="display:none">
             <label class="toggle-setting">
               <input type="checkbox" id="preserve-layout" checked>
@@ -342,15 +277,12 @@
                   onclick="convertToHandwriting()">
             <i class="fas fa-pen-nib"></i> Convert to Handwriting
           </button>
-
         </div>
       </div>
-    </div><!-- /left-panel -->
+    </div><!-- /left -->
 
-    <!-- ═══ RIGHT PANEL ═══════════════════════════════════════ -->
+    <!-- RIGHT PANEL -->
     <div class="right-panel">
-
-      <!-- Preview card -->
       <div class="card preview-card">
         <div class="card-header">
           <i class="fas fa-eye"></i>
@@ -365,42 +297,33 @@
             </button>
           </div>
         </div>
-        <div class="card-body preview-body">
-
-          <!-- Empty -->
+        <div class="card-body" style="min-height:360px;display:flex;align-items:center;justify-content:center;">
           <div class="empty-preview" id="empty-preview">
             <div class="empty-icon"><i class="fas fa-file-alt"></i></div>
-            <h3>Your preview appears here</h3>
+            <h3>Preview appears here</h3>
             <p>Upload or type text → Customize → Convert</p>
             <div class="preview-features">
-              <div class="feature"><i class="fas fa-pen-nib"></i><span>35 Fonts</span></div>
+              <div class="feature"><i class="fas fa-pen-nib"></i><span>32 Fonts</span></div>
               <div class="feature"><i class="fas fa-scroll"></i><span>6 Papers</span></div>
               <div class="feature"><i class="fas fa-tint"></i><span>6 Colors</span></div>
               <div class="feature"><i class="fas fa-file-pdf"></i><span>PDF &amp; JPG</span></div>
             </div>
           </div>
-
-          <!-- Loading -->
           <div class="preview-loading" id="preview-loading" style="display:none">
             <div class="loading-animation">
               <div class="pen-anim"><i class="fas fa-pen-nib"></i></div>
               <h3 id="loading-text">Generating handwriting…</h3>
               <div class="progress-bar"><div class="progress-fill"></div></div>
-              <p class="loading-sub" id="loading-sub">Please wait…</p>
             </div>
           </div>
-
-          <!-- Preview image -->
           <div id="preview-container" style="display:none">
             <div class="page-preview-wrapper">
               <img id="preview-image" src="" alt="Handwritten preview" class="preview-image">
             </div>
           </div>
-
         </div>
       </div>
 
-      <!-- Download card -->
       <div class="card download-card" id="download-card" style="display:none">
         <div class="card-header">
           <i class="fas fa-download"></i>
@@ -422,28 +345,24 @@
             </div>
           </div>
           <div class="download-buttons" id="download-buttons"></div>
-          <button class="btn btn-secondary btn-full" style="margin-top:.75rem"
-                  onclick="resetAll()">
+          <button class="btn btn-secondary btn-full" style="margin-top:.75rem" onclick="resetAll()">
             <i class="fas fa-redo"></i> Start Over
           </button>
         </div>
       </div>
-
-    </div><!-- /right-panel -->
-  </div><!-- /workspace -->
+    </div>
+  </div>
 </main>
 
 <div id="toast-container" class="toast-container"></div>
-
 <div class="overlay" id="overlay" style="display:none">
   <div class="overlay-content">
     <div class="spinner"></div>
     <p id="overlay-text">Processing…</p>
   </div>
 </div>
-
 <footer class="footer">
-  <p>✍️ PDF to Handwriting Converter &bull; 35 fonts &bull; Python / Flask</p>
+  <p>✍️ PDF to Handwriting Converter &bull; 32 Handwriting Fonts &bull; Python / Flask</p>
 </footer>
 
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
