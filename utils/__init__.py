@@ -1,1 +1,1 @@
-#Utils Package
+"""Utilities package for PDF to Handwriting Converter"""
