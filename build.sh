@@ -1,94 +1,111 @@
 #!/bin/bash
 set -e
-echo "=== Build Start ==="
+echo "========================================="
+echo "  PDF to Handwriting – Build v6.0"
+echo "========================================="
+
 python --version
 
-echo ">>> Installing system packages..."
+echo ">>> System packages..."
 apt-get update -qq 2>/dev/null || true
 apt-get install -y -qq \
     tesseract-ocr tesseract-ocr-eng \
-    libgl1-mesa-glx libglib2.0-0 \
-    2>/dev/null || echo "(apt skipped)"
+    libgl1-mesa-glx libglib2.0-0 libgomp1 \
+    2>/dev/null || echo "(apt limited)"
 
-echo ">>> Installing Python packages..."
-pip install --upgrade pip wheel setuptools --quiet
-pip install -r requirements.txt --quiet
+echo ">>> Python packages..."
+pip install --upgrade pip wheel setuptools -q
+pip install -r requirements.txt -q
 
-echo ">>> Verifying imports..."
-python - <<'EOF'
-import sys
-tests = [
-    ("fitz",         "PyMuPDF"),
-    ("PIL",          "Pillow"),
-    ("reportlab",    "ReportLab"),
-    ("pytesseract",  "pytesseract"),
-    ("flask",        "Flask"),
-    ("requests",     "requests"),
-]
-ok = True
-for mod, name in tests:
-    try:
-        __import__(mod)
-        print(f"  ✅ {name}")
-    except ImportError as e:
-        print(f"  ❌ {name}: {e}")
-        ok = False
-sys.exit(0 if ok else 1)
-EOF
+echo ">>> Checking imports..."
+python -c "
+import fitz, PIL, reportlab, flask, requests
+print('✅ All imports OK')
+print(f'   PyMuPDF: {fitz.version}')
+"
 
-echo ">>> Pre-downloading priority fonts (fast ones only, background gets the rest)..."
-python - <<'EOF'
-import sys, time, requests
+echo ">>> Pre-downloading fonts via GitHub raw..."
+python - << 'PYEOF'
+import time
+import requests
 from pathlib import Path
 
 FONTS_DIR = Path("static/fonts")
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Only download the 5 most-used fonts synchronously during build
-PRIORITY = {
-    "Kalam-Regular.ttf":
-        "https://fonts.gstatic.com/s/kalam/v16/YA9dr0Wd4kDdMuhWMibDszkB.ttf",
-    "Caveat-Regular.ttf":
-        "https://fonts.gstatic.com/s/caveat/v18/WnznHAc5bAfYB2QRah7pcpNvOx-pjcJ9SIKjYBxPigs.ttf",
-    "PatrickHand-Regular.ttf":
-        "https://fonts.gstatic.com/s/patrickhand/v20/LDI1apSQOAYtSuYWp8ZweqbHoxIB.ttf",
-    "DancingScript-Regular.ttf":
-        "https://fonts.gstatic.com/s/dancingscript/v25/If2cXTr6YS-zF4S-kcSWSVi_sxjsohD9F50Ruu7BMSo3ROp6.ttf",
-    "Pacifico-Regular.ttf":
-        "https://fonts.gstatic.com/s/pacifico/v22/FwZY7-Qmy14u9lezJ96A4sijpFu_.ttf",
-    "GloriaHallelujah.ttf":
-        "https://fonts.gstatic.com/s/gloriahallelujah/v17/LYjYdHv3kUk9BMV96EIswT9DIbW-MLSy3TKEvkCF.ttf",
-    "Sacramento-Regular.ttf":
-        "https://fonts.gstatic.com/s/sacramento/v15/buEzpo6gcdjy0EiZMBUG4C0f-w.ttf",
-    "GreatVibes-Regular.ttf":
-        "https://fonts.gstatic.com/s/greatvibes/v19/RWmMoKWR9v4ksMfaWd_JN9XFiaQ.ttf",
-}
+BASE = "https://raw.githubusercontent.com/google/fonts/main"
+
+# All fonts from font_manager.py FONTS dict
+DOWNLOAD_LIST = [
+    ("Kalam-Regular.ttf",           "ofl/kalam/Kalam-Regular.ttf"),
+    ("Caveat-Regular.ttf",          "ofl/caveat/static/Caveat-Regular.ttf"),
+    ("IndieFlower.ttf",             "ofl/indieflower/IndieFlower.ttf"),
+    ("GloriaHallelujah.ttf",        "ofl/gloriahallelujah/GloriaHallelujah.ttf"),
+    ("ShadowsIntoLight.ttf",        "ofl/shadowsintolight/ShadowsIntoLight.ttf"),
+    ("NothingYouCouldDo.ttf",       "ofl/nothingyoucoulddo/NothingYouCouldDo.ttf"),
+    ("CoveredByYourGrace.ttf",      "ofl/coveredbyyourgrace/CoveredByYourGrace.ttf"),
+    ("GochiHand-Regular.ttf",       "ofl/gochihand/GochiHand-Regular.ttf"),
+    ("Handlee-Regular.ttf",         "ofl/handlee/Handlee-Regular.ttf"),
+    ("PatrickHand-Regular.ttf",     "ofl/patrickhand/PatrickHand-Regular.ttf"),
+    ("ArchitectsDaughter.ttf",      "ofl/architectsdaughter/ArchitectsDaughter.ttf"),
+    ("AmaticSC-Regular.ttf",        "ofl/amaticsc/AmaticSC-Regular.ttf"),
+    ("ReenieBeanie-Regular.ttf",    "ofl/reeniebeanie/ReenieBeanie-Regular.ttf"),
+    ("DancingScript-Regular.ttf",   "ofl/dancingscript/static/DancingScript-Regular.ttf"),
+    ("Satisfy-Regular.ttf",         "ofl/satisfy/Satisfy-Regular.ttf"),
+    ("Yellowtail-Regular.ttf",      "apache/yellowtail/Yellowtail-Regular.ttf"),
+    ("Damion-Regular.ttf",          "ofl/damion/Damion-Regular.ttf"),
+    ("Norican-Regular.ttf",         "ofl/norican/Norican-Regular.ttf"),
+    ("MarckScript-Regular.ttf",     "ofl/marckscript/MarckScript-Regular.ttf"),
+    ("HomemadeApple-Regular.ttf",   "apache/homemadeapple/HomemadeApple-Regular.ttf"),
+    ("GreatVibes-Regular.ttf",      "ofl/greatvibes/GreatVibes-Regular.ttf"),
+    ("Allura-Regular.ttf",          "ofl/allura/Allura-Regular.ttf"),
+    ("Sacramento-Regular.ttf",      "ofl/sacramento/Sacramento-Regular.ttf"),
+    ("Parisienne-Regular.ttf",      "ofl/parisienne/Parisienne-Regular.ttf"),
+    ("PinyonScript-Regular.ttf",    "ofl/pinyonscript/PinyonScript-Regular.ttf"),
+    ("Tangerine-Regular.ttf",       "ofl/tangerine/Tangerine-Regular.ttf"),
+    ("AlexBrush-Regular.ttf",       "ofl/alexbrush/AlexBrush-Regular.ttf"),
+    ("Engagement-Regular.ttf",      "ofl/engagement/Engagement-Regular.ttf"),
+    ("EuphoriaScript-Regular.ttf",  "ofl/euphoriascript/EuphoriaScript-Regular.ttf"),
+    ("PermanentMarker-Regular.ttf", "apache/permanentmarker/PermanentMarker-Regular.ttf"),
+    ("RockSalt-Regular.ttf",        "apache/rocksalt/RockSalt-Regular.ttf"),
+    ("Pacifico-Regular.ttf",        "ofl/pacifico/Pacifico-Regular.ttf"),
+]
 
 headers = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
-    "Referer": "https://fonts.google.com/",
 }
 
 ok = 0
-for fname, url in PRIORITY.items():
+fail = 0
+for fname, path in DOWNLOAD_LIST:
     dest = FONTS_DIR / fname
-    if dest.exists():
+    if dest.exists() and dest.stat().st_size > 4096:
         print(f"  ✅ {fname} (cached)")
         ok += 1
         continue
+    url = f"{BASE}/{path}"
     try:
-        r = requests.get(url, headers=headers, timeout=20)
+        r = requests.get(url, headers=headers, timeout=25)
         if r.status_code == 200 and len(r.content) > 4096:
             dest.write_bytes(r.content)
             print(f"  ✅ {fname} ({len(r.content)//1024} KB)")
             ok += 1
         else:
-            print(f"  ⚠  {fname}: HTTP {r.status_code}")
+            print(f"  ❌ {fname}: HTTP {r.status_code}")
+            fail += 1
     except Exception as e:
-        print(f"  ⚠  {fname}: {e}")
-    time.sleep(0.2)
+        print(f"  ❌ {fname}: {e}")
+        fail += 1
+    time.sleep(0.1)
 
-print(f"Priority fonts ready: {ok}/{len(PRIORITY)}")
-EOF
+print(f"\nFonts: {ok} OK, {fail} failed out of {len(DOWNLOAD_LIST)}")
+if ok == 0:
+    print("WARNING: No fonts downloaded!")
+    import sys; sys.exit(1)
+PYEOF
 
-echo "=== Build Complete ==="
+echo "========================================="
+echo "  Build Complete ✅"
+echo "  Fonts in static/fonts/:"
+ls -la static/fonts/ | tail -20
+echo "========================================="
