@@ -1,24 +1,11 @@
-# Core Framework
 Flask==3.0.3
 Flask-CORS==4.0.0
 Werkzeug==3.0.3
 gunicorn==21.2.0
-
-# PDF Processing - Use pre-built wheels only
 PyMuPDF==1.23.26
-
-# Image Processing
 Pillow==10.3.0
-
-# OCR
 pytesseract==0.3.10
-
-# PDF Generation
 reportlab==4.1.0
-
-# HTTP Requests (for font downloads)
 requests==2.32.3
-
-# Utilities
 python-dotenv==1.0.1
 numpy==1.26.4
