@@ -1,97 +1,108 @@
+"""
+OCR extractor for JPG / PNG images using Tesseract via pytesseract.
+Falls back gracefully if Tesseract is not installed.
+"""
 import logging
 import re
+import shutil
 from pathlib import Path
-from typing import Dict, Any
-from PIL import Image
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
+# Common Tesseract locations
+_TESSERACT_PATHS = [
+    "/usr/bin/tesseract",
+    "/usr/local/bin/tesseract",
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+]
+
+
 class OCRExtractor:
-    """Extract text from images using OCR"""
-    
+    """Extract text from raster images via Tesseract OCR."""
+
     def extract(self, file_path: str) -> Dict[str, Any]:
-        """Extract text from image file"""
         try:
-            # Try pytesseract first
-            return self._extract_with_tesseract(file_path)
-        except Exception as e:
-            logger.warning(f"Tesseract OCR failed: {e}")
+            return self._tesseract(file_path)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning(f"OCR failed ({exc}); returning placeholder.")
+            msg = (
+                f"[OCR could not extract text from this image.]\n\n"
+                f"Reason: {exc}\n\n"
+                "Tip: Make sure Tesseract is installed on the server,\n"
+                "or paste your text directly in the 'Direct Text' tab."
+            )
             return {
-                'full_text': f'[OCR extraction failed. Please install Tesseract OCR or use direct text input.]\n\nError: {str(e)}',
-                'pages': [f'OCR Error: {str(e)}'],
-                'page_count': 1,
-                'layout_data': None
+                "full_text":   msg,
+                "pages":       [msg],
+                "page_count":  1,
+                "layout_data": None,
             }
-    
-    def _extract_with_tesseract(self, file_path: str) -> Dict[str, Any]:
-        """Use pytesseract for OCR"""
+
+    # ── Private ──────────────────────────────────────────────────────────
+
+    def _tesseract(self, file_path: str) -> Dict[str, Any]:
         import pytesseract
-        
-        # Set tesseract path for different OS
-        tesseract_paths = [
-            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
-            '/usr/bin/tesseract',
-            '/usr/local/bin/tesseract',
-        ]
-        
-        import shutil
-        if shutil.which('tesseract'):
-            pass  # Use from PATH
+        from PIL import Image
+
+        # Locate tesseract binary
+        if shutil.which("tesseract"):
+            pass  # already on PATH
         else:
-            for path in tesseract_paths:
-                import os
-                if os.path.exists(path):
-                    pytesseract.pytesseract.tesseract_cmd = path
+            for p in _TESSERACT_PATHS:
+                if Path(p).exists():
+                    pytesseract.pytesseract.tesseract_cmd = p
                     break
-        
-        # Open and preprocess image
+            else:
+                raise RuntimeError(
+                    "Tesseract OCR binary not found. "
+                    "Install with: apt-get install tesseract-ocr"
+                )
+
         img = Image.open(file_path)
-        
-        # Convert to RGB if needed
-        if img.mode not in ['RGB', 'L']:
-            img = img.convert('RGB')
-        
-        # Upscale small images for better OCR
-        width, height = img.size
-        if width < 1000:
-            scale = 1000 / width
-            img = img.resize((int(width * scale), int(height * scale)), Image.LANCZOS)
-        
-        # Run OCR
-        config = '--oem 3 --psm 6'
-        text = pytesseract.image_to_string(img, config=config)
-        
-        # Clean up text
-        text = self._clean_text(text)
-        
+
+        # Normalise colour mode
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+
+        # Upscale tiny images for better accuracy
+        w, h = img.size
+        if w < 1200:
+            scale = 1200 / w
+            img   = img.resize(
+                (int(w * scale), int(h * scale)),
+                Image.LANCZOS
+            )
+
+        # Run OCR (OEM 3 = best LSTM engine, PSM 6 = uniform text block)
+        config = "--oem 3 --psm 6"
+        text   = pytesseract.image_to_string(img, config=config)
+        text   = self._clean(text)
+
         return {
-            'full_text': text,
-            'pages': [text],
-            'page_count': 1,
-            'layout_data': None
+            "full_text":   text,
+            "pages":       [text],
+            "page_count":  1,
+            "layout_data": None,
         }
-    
-    def _clean_text(self, text: str) -> str:
-        """Clean and normalize extracted text"""
-        # Remove excessive whitespace
-        lines = text.split('\n')
-        cleaned_lines = []
-        
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        lines   = text.split("\n")
+        result  = []
+        blanks  = 0
+
         for line in lines:
             line = line.rstrip()
-            cleaned_lines.append(line)
-        
-        # Remove excessive blank lines (max 2 consecutive)
-        result = []
-        blank_count = 0
-        for line in cleaned_lines:
-            if line.strip() == '':
-                blank_count += 1
-                if blank_count <= 2:
+            if line == "":
+                blanks += 1
+                if blanks <= 2:
                     result.append(line)
             else:
-                blank_count = 0
+                blanks = 0
                 result.append(line)
-        
-        return '\n'.join(result).strip()
+
+        return "\n".join(result).strip()
