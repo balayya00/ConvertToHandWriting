@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pdf-handwriting-converter
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      apt-get install -y tesseract-ocr tesseract-ocr-eng libgl1-mesa-glx || true
+      python -c "from utils.font_manager import FontManager; from pathlib import Path; fm = FontManager(Path('static/fonts')); fm.ensure_fonts_downloaded()"
+    startCommand: gunicorn app:app --timeout 120 --workers 2 --bind 0.0.0.0:$PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: FLASK_ENV
+        value: production
+    plan: starter
